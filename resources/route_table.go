@@ -19,6 +19,14 @@ func init() {
 		Scope:    nuke.Compartment,
 		Resource: &RouteTable{},
 		Lister:   &RouteTableLister{},
+		// OCI rejects deleting a route table while a subnet still uses it
+		// ("is associated with Subnet that is in use") - the mirror image of the
+		// gateway-vs-route-table constraint below. Note: if a rerun's scope ever narrows
+		// to just route tables with zero real subnets left, libnuke's Scan/Run mismatch
+		// (New vs NewDependency counting) can make the run falsely report "No resource to
+		// delete" - seen once already with the Subnet dependency on a 3-item scope. Safe
+		// here since a full-compartment run always has independent seed items.
+		DependsOn: []string{SubnetResource},
 	})
 }
 
