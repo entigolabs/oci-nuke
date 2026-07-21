@@ -6,9 +6,11 @@ package resources
 import (
 	"github.com/entigolabs/oci-nuke/pkg/nuke"
 
+	"github.com/oracle/oci-go-sdk/v65/containerengine"
 	"github.com/oracle/oci-go-sdk/v65/containerinstances"
 	"github.com/oracle/oci-go-sdk/v65/core"
 	"github.com/oracle/oci-go-sdk/v65/devops"
+	"github.com/oracle/oci-go-sdk/v65/dns"
 	"github.com/oracle/oci-go-sdk/v65/identity"
 	"github.com/oracle/oci-go-sdk/v65/logging"
 	"github.com/oracle/oci-go-sdk/v65/objectstorage"
@@ -71,6 +73,24 @@ func devopsClient(o *nuke.ListerOpts) (devops.DevopsClient, error) {
 
 func onsClient(o *nuke.ListerOpts) (ons.NotificationControlPlaneClient, error) {
 	client, err := ons.NewNotificationControlPlaneClientWithConfigurationProvider(o.Provider)
+	if err != nil {
+		return client, err
+	}
+	client.SetRegion(o.Region)
+	return client, nil
+}
+
+func containerEngineClient(o *nuke.ListerOpts) (containerengine.ContainerEngineClient, error) {
+	client, err := containerengine.NewContainerEngineClientWithConfigurationProvider(o.Provider)
+	if err != nil {
+		return client, err
+	}
+	client.SetRegion(o.Region)
+	return client, nil
+}
+
+func dnsClient(o *nuke.ListerOpts) (dns.DnsClient, error) {
+	client, err := dns.NewDnsClientWithConfigurationProvider(o.Provider)
 	if err != nil {
 		return client, err
 	}

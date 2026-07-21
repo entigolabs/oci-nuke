@@ -23,19 +23,22 @@ implement OCI-specific resource listers and removers. See libnuke's own document
 for how the engine and config format work in more depth.
 
 Resource coverage today is intentionally narrow - only what entigo-infralib's Oracle
-bootstrap (via `entigo-infralib-agent`) and its `oracle/vpc` terraform module create:
+bootstrap (via `entigo-infralib-agent`) and its `oracle/vpc`, `oracle/dns`, `oracle/oke`,
+and `oracle/oke-node-pool` terraform modules create:
 
 * Networking: VCN, Subnet, Route Table (including a VCN's default route table),
   Internet Gateway, NAT Gateway, Service Gateway
+* DNS: Zone
 * Object Storage: Bucket (including all object versions, not just current ones)
 * Logging: Log Group, Log
 * Compute: Container Instance
+* Kubernetes Engine (OKE): Cluster, Node Pool
 * DevOps: Project, Deploy Pipeline, Build Pipeline
 * Notifications: ONS Topic
 * IAM: Dynamic Group, Policy, Customer Secret Key
 
-As entigo-infralib's Oracle module set grows (OKE, Vault, etc.), this list needs to
-grow with it. Contributions and issues welcome.
+As entigo-infralib's Oracle module set grows further (Vault, etc.), this list needs to
+keep growing with it. Contributions and issues welcome.
 
 ## Requirements
 
