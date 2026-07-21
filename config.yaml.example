@@ -1,0 +1,8 @@
+regions:
+  - eu-frankfurt-1
+
+# Every compartment you intend to nuke must be declared here explicitly - this is a
+# safety net, not a discovery mechanism. oci-nuke refuses to run against an
+# undeclared compartment.
+accounts:
+  ocid1.compartment.oc1..exampleaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: {}
