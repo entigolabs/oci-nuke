@@ -2,10 +2,13 @@ package resources
 
 import (
 	"context"
+	"fmt"
+	"time"
 
 	"github.com/ekristen/libnuke/pkg/registry"
 	"github.com/ekristen/libnuke/pkg/resource"
 	"github.com/ekristen/libnuke/pkg/types"
+	"github.com/oracle/oci-go-sdk/v65/common"
 	"github.com/oracle/oci-go-sdk/v65/containerengine"
 
 	"github.com/entigolabs/oci-nuke/pkg/nuke"
@@ -62,9 +65,35 @@ type OkeNodePool struct {
 	Name   *string
 }
 
+// DeleteNodePool only accepts the request - the underlying compute instances take
+// several minutes to actually terminate and release their VNICs. Returning as soon as
+// the delete call is accepted (rather than once the pool is actually gone) makes libnuke
+// think the dependency is satisfied and move on to the subnet, which then 409s with
+// "references the VNIC ..." since the node's VNIC hasn't been released yet.
 func (r *OkeNodePool) Remove(ctx context.Context) error {
-	_, err := r.client.DeleteNodePool(ctx, containerengine.DeleteNodePoolRequest{NodePoolId: r.ID})
-	return err
+	if _, err := r.client.DeleteNodePool(ctx, containerengine.DeleteNodePoolRequest{NodePoolId: r.ID}); err != nil {
+		return err
+	}
+
+	deadline := time.Now().Add(10 * time.Minute)
+	for time.Now().Before(deadline) {
+		resp, err := r.client.GetNodePool(ctx, containerengine.GetNodePoolRequest{NodePoolId: r.ID})
+		if err != nil {
+			if svcErr, ok := common.IsServiceError(err); ok && svcErr.GetHTTPStatusCode() == 404 {
+				return nil
+			}
+			return err
+		}
+		if resp.LifecycleState == containerengine.NodePoolLifecycleStateDeleted {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(10 * time.Second):
+		}
+	}
+	return fmt.Errorf("node pool %s did not reach Deleted state within timeout", *r.ID)
 }
 
 func (r *OkeNodePool) Properties() types.Properties {

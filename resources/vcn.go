@@ -25,6 +25,7 @@ func init() {
 			InternetGatewayResource,
 			NatGatewayResource,
 			ServiceGatewayResource,
+			NetworkSecurityGroupResource,
 		},
 	})
 }

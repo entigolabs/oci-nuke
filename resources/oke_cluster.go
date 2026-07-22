@@ -2,10 +2,13 @@ package resources
 
 import (
 	"context"
+	"fmt"
+	"time"
 
 	"github.com/ekristen/libnuke/pkg/registry"
 	"github.com/ekristen/libnuke/pkg/resource"
 	"github.com/ekristen/libnuke/pkg/types"
+	"github.com/oracle/oci-go-sdk/v65/common"
 	"github.com/oracle/oci-go-sdk/v65/containerengine"
 
 	"github.com/entigolabs/oci-nuke/pkg/nuke"
@@ -63,9 +66,34 @@ type OkeCluster struct {
 	Name   *string
 }
 
+// DeleteCluster only accepts the request - releasing the endpoint's service VNIC from
+// its subnet takes a little while longer. Returning early makes libnuke think the
+// dependency is satisfied and move on to the subnet, which then 409s with "references
+// the service VNIC ...".
 func (r *OkeCluster) Remove(ctx context.Context) error {
-	_, err := r.client.DeleteCluster(ctx, containerengine.DeleteClusterRequest{ClusterId: r.ID})
-	return err
+	if _, err := r.client.DeleteCluster(ctx, containerengine.DeleteClusterRequest{ClusterId: r.ID}); err != nil {
+		return err
+	}
+
+	deadline := time.Now().Add(10 * time.Minute)
+	for time.Now().Before(deadline) {
+		resp, err := r.client.GetCluster(ctx, containerengine.GetClusterRequest{ClusterId: r.ID})
+		if err != nil {
+			if svcErr, ok := common.IsServiceError(err); ok && svcErr.GetHTTPStatusCode() == 404 {
+				return nil
+			}
+			return err
+		}
+		if resp.LifecycleState == containerengine.ClusterLifecycleStateDeleted {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(10 * time.Second):
+		}
+	}
+	return fmt.Errorf("cluster %s did not reach Deleted state within timeout", *r.ID)
 }
 
 func (r *OkeCluster) Properties() types.Properties {

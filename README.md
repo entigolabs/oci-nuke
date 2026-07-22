@@ -27,7 +27,7 @@ bootstrap (via `entigo-infralib-agent`) and its `oracle/vpc`, `oracle/dns`, `ora
 and `oracle/oke-node-pool` terraform modules create:
 
 * Networking: VCN, Subnet, Route Table (including a VCN's default route table),
-  Internet Gateway, NAT Gateway, Service Gateway
+  Internet Gateway, NAT Gateway, Service Gateway, Network Security Group
 * DNS: Zone
 * Object Storage: Bucket (including all object versions, not just current ones)
 * Logging: Log Group, Log
