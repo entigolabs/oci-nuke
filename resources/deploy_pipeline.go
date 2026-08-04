@@ -62,7 +62,51 @@ type DeployPipeline struct {
 	Name   *string
 }
 
+// Same stage-first requirement and leaves-first ordering as BuildPipeline.Remove - see
+// the comment there.
 func (r *DeployPipeline) Remove(ctx context.Context) error {
+	for {
+		var stageIDs []*string
+		page := ""
+		for {
+			resp, err := r.client.ListDeployStages(ctx, devops.ListDeployStagesRequest{
+				DeployPipelineId: r.ID,
+				Page:             strPtrOrNil(page),
+			})
+			if err != nil {
+				return err
+			}
+			for _, s := range resp.Items {
+				switch s.GetLifecycleState() {
+				case devops.DeployStageLifecycleStateDeleted, devops.DeployStageLifecycleStateDeleting:
+					continue
+				}
+				stageIDs = append(stageIDs, s.GetId())
+			}
+			if resp.OpcNextPage == nil {
+				break
+			}
+			page = *resp.OpcNextPage
+		}
+
+		if len(stageIDs) == 0 {
+			break
+		}
+
+		progress := false
+		var lastErr error
+		for _, id := range stageIDs {
+			if _, err := r.client.DeleteDeployStage(ctx, devops.DeleteDeployStageRequest{DeployStageId: id}); err != nil {
+				lastErr = err
+				continue
+			}
+			progress = true
+		}
+		if !progress {
+			return lastErr
+		}
+	}
+
 	_, err := r.client.DeleteDeployPipeline(ctx, devops.DeleteDeployPipelineRequest{DeployPipelineId: r.ID})
 	return err
 }
