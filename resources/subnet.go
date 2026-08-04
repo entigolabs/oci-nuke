@@ -20,9 +20,10 @@ func init() {
 		Resource: &Subnet{},
 		Lister:   &SubnetLister{},
 		// Anything that places its own VNIC in a subnet (e.g. an OKE cluster's public
-		// endpoint, when is_public_ip_enabled puts it in the public subnet) must be gone
+		// endpoint, when is_public_ip_enabled puts it in the public subnet, or a load
+		// balancer created by the in-cluster CCM/ingress controllers) must be gone
 		// first, or OCI rejects the delete with "references the service VNIC ...".
-		DependsOn: []string{OkeClusterResource, OkeNodePoolResource},
+		DependsOn: []string{OkeClusterResource, OkeNodePoolResource, LoadBalancerResource},
 	})
 }
 

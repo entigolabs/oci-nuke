@@ -6,12 +6,14 @@ package resources
 import (
 	"github.com/entigolabs/oci-nuke/pkg/nuke"
 
+	"github.com/oracle/oci-go-sdk/v65/certificatesmanagement"
 	"github.com/oracle/oci-go-sdk/v65/containerengine"
 	"github.com/oracle/oci-go-sdk/v65/containerinstances"
 	"github.com/oracle/oci-go-sdk/v65/core"
 	"github.com/oracle/oci-go-sdk/v65/devops"
 	"github.com/oracle/oci-go-sdk/v65/dns"
 	"github.com/oracle/oci-go-sdk/v65/identity"
+	"github.com/oracle/oci-go-sdk/v65/loadbalancer"
 	"github.com/oracle/oci-go-sdk/v65/logging"
 	"github.com/oracle/oci-go-sdk/v65/objectstorage"
 	"github.com/oracle/oci-go-sdk/v65/ons"
@@ -73,6 +75,24 @@ func devopsClient(o *nuke.ListerOpts) (devops.DevopsClient, error) {
 
 func onsClient(o *nuke.ListerOpts) (ons.NotificationControlPlaneClient, error) {
 	client, err := ons.NewNotificationControlPlaneClientWithConfigurationProvider(o.Provider)
+	if err != nil {
+		return client, err
+	}
+	client.SetRegion(o.Region)
+	return client, nil
+}
+
+func certificatesManagementClient(o *nuke.ListerOpts) (certificatesmanagement.CertificatesManagementClient, error) {
+	client, err := certificatesmanagement.NewCertificatesManagementClientWithConfigurationProvider(o.Provider)
+	if err != nil {
+		return client, err
+	}
+	client.SetRegion(o.Region)
+	return client, nil
+}
+
+func loadBalancerClient(o *nuke.ListerOpts) (loadbalancer.LoadBalancerClient, error) {
+	client, err := loadbalancer.NewLoadBalancerClientWithConfigurationProvider(o.Provider)
 	if err != nil {
 		return client, err
 	}

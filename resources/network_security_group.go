@@ -20,8 +20,9 @@ func init() {
 		Resource: &NetworkSecurityGroup{},
 		Lister:   &NetworkSecurityGroupLister{},
 		// A VNIC keeps its NSG membership until the VNIC itself is gone, so this can't be
-		// removed while an OKE cluster endpoint or node pool still references it.
-		DependsOn: []string{OkeClusterResource, OkeNodePoolResource},
+		// removed while an OKE cluster endpoint, node pool, or load balancer (attached to
+		// NSGs via the IngressClass/Service annotations) still references it.
+		DependsOn: []string{OkeClusterResource, OkeNodePoolResource, LoadBalancerResource},
 	})
 }
 

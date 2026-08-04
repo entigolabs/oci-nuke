@@ -22,12 +22,23 @@ progress scanning, filtering, config-driven blocklists) so this repo only needs 
 implement OCI-specific resource listers and removers. See libnuke's own documentation
 for how the engine and config format work in more depth.
 
+Note: `go.mod` replaces libnuke with the patched copy in `third_party/libnuke` (one-line
+fix in `pkg/nuke/nuke.go`). Upstream v1.3.0 marks every item of a resource type that
+declares `DependsOn` as `ItemStateNewDependency` at scan time - even when nothing it
+depends on still exists - while `Run()`'s "No resource to delete" early-exit counts only
+`ItemStateNew`. The tail end of a partially-completed nuke (subnets, route tables, NSGs,
+gateways - all dependency-declaring types here) therefore falsely reported nothing left
+to delete and required finishing by hand. Drop the replace once the fix lands upstream.
+
 Resource coverage today is intentionally narrow - only what entigo-infralib's Oracle
 bootstrap (via `entigo-infralib-agent`) and its `oracle/vpc`, `oracle/dns`, `oracle/oke`,
 and `oracle/oke-node-pool` terraform modules create:
 
 * Networking: VCN, Subnet, Route Table (including a VCN's default route table),
-  Internet Gateway, NAT Gateway, Service Gateway, Network Security Group
+  Internet Gateway, NAT Gateway, Service Gateway, Network Security Group,
+  Load Balancer (created out-of-band by in-cluster controllers - the OCI CCM for
+  Service type=LoadBalancer, the native ingress controller - so deleting the OKE
+  cluster orphans them)
 * DNS: Zone
 * Object Storage: Bucket (including all object versions, not just current ones)
 * Logging: Log Group, Log
@@ -36,6 +47,8 @@ and `oracle/oke-node-pool` terraform modules create:
 * DevOps: Project, Deploy Pipeline, Build Pipeline
 * Notifications: ONS Topic
 * IAM: Dynamic Group, Policy, Customer Secret Key
+* Certificates: Certificate (created out-of-band by the native ingress controller,
+  one per TLS ingress, and never cleaned up by it)
 
 As entigo-infralib's Oracle module set grows further (Vault, etc.), this list needs to
 keep growing with it. Contributions and issues welcome.
