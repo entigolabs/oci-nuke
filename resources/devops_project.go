@@ -19,7 +19,7 @@ func init() {
 		Scope:     nuke.Compartment,
 		Resource:  &DevopsProject{},
 		Lister:    &DevopsProjectLister{},
-		DependsOn: []string{DeployPipelineResource, BuildPipelineResource},
+		DependsOn: []string{DeployPipelineResource, BuildPipelineResource, DevopsRepositoryResource},
 	})
 }
 

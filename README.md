@@ -50,6 +50,13 @@ and `oracle/oke-node-pool` terraform modules create:
 * Certificates: Certificate (created out-of-band by the native ingress controller,
   one per TLS ingress, and never cleaned up by it)
 
+One caveat worth knowing about: OCI certificates cannot be deleted immediately, only
+*scheduled* for deletion, and the service enforces a 24-hour minimum ("less than minimum
+1440 even after allowable clock skew 5"). `oci-nuke` schedules them at the earliest time
+OCI accepts rather than accepting the 30-day default, so a freshly nuked compartment
+still lists one `PENDING_DELETION` certificate per TLS ingress that existed, disappearing
+about a day later. Nothing blocks re-provisioning in the meantime.
+
 As entigo-infralib's Oracle module set grows further (Vault, etc.), this list needs to
 keep growing with it. Contributions and issues welcome.
 

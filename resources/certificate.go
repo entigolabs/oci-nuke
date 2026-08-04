@@ -2,11 +2,13 @@ package resources
 
 import (
 	"context"
+	"time"
 
 	"github.com/ekristen/libnuke/pkg/registry"
 	"github.com/ekristen/libnuke/pkg/resource"
 	"github.com/ekristen/libnuke/pkg/types"
 	"github.com/oracle/oci-go-sdk/v65/certificatesmanagement"
+	"github.com/oracle/oci-go-sdk/v65/common"
 
 	"github.com/entigolabs/oci-nuke/pkg/nuke"
 )
@@ -71,12 +73,28 @@ type Certificate struct {
 	Name   *string
 }
 
+// certificateMinRetention is OCI's mandatory minimum delay before a scheduled
+// certificate deletion may take effect. The API is explicit about it: scheduling any
+// sooner fails with "ScheduledTimeOfDeletion ... is less than minimum 1440 even after
+// allowable clock skew 5". A little margin is added on top of the 24 hours so a slow
+// request or a skewed local clock can't land under the limit.
+const certificateMinRetention = 25 * time.Hour
+
+// A certificate can only ever be *scheduled* for deletion, never deleted outright, so it
+// necessarily outlives the nuke - it sits in PENDING_DELETION until the scheduled time
+// and OCI then removes it. Passing no TimeOfDeletion at all defaults to 30 days, so an
+// explicit earliest-allowed time is used instead to keep the leftover window to ~1 day.
+// Consequence: a nuked compartment legitimately still lists one PENDING_DELETION
+// certificate per TLS ingress that existed. Nothing blocks a fresh provision, and once
+// scheduled the deletion cannot be re-scheduled (IncorrectState) without cancelling
+// first, so re-running the nuke leaves the existing schedule alone.
 func (r *Certificate) Remove(ctx context.Context) error {
-	// No TimeOfDeletion = delete as soon as the service processes it (certificates have
-	// no mandatory retention window, unlike KMS vaults).
+	deleteAt := time.Now().Add(certificateMinRetention)
 	_, err := r.client.ScheduleCertificateDeletion(ctx, certificatesmanagement.ScheduleCertificateDeletionRequest{
-		CertificateId:                      r.ID,
-		ScheduleCertificateDeletionDetails: certificatesmanagement.ScheduleCertificateDeletionDetails{},
+		CertificateId: r.ID,
+		ScheduleCertificateDeletionDetails: certificatesmanagement.ScheduleCertificateDeletionDetails{
+			TimeOfDeletion: &common.SDKTime{Time: deleteAt},
+		},
 	})
 	return err
 }

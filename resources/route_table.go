@@ -77,8 +77,19 @@ func (l *RouteTableLister) List(ctx context.Context, o interface{}) ([]resource.
 			if rt.LifecycleState == core.RouteTableLifecycleStateTerminated || rt.LifecycleState == core.RouteTableLifecycleStateTerminating {
 				continue
 			}
+			isDefault := rt.Id != nil && defaultIDs[*rt.Id]
+			// A default route table's Remove() clears its rules instead of deleting it, so
+			// it keeps being listed forever afterwards - and libnuke only marks an item
+			// finished once the lister stops returning it (HandleWait re-lists to check).
+			// Left listed, it sits in "waiting for removal" until max-wait-retries kills
+			// the run, taking the gateways and VCN that depend on it down with it. Once the
+			// rules are gone there is genuinely nothing left to do here: the empty table is
+			// removed by DeleteVcn.
+			if isDefault && len(rt.RouteRules) == 0 {
+				continue
+			}
 			resources = append(resources, &RouteTable{
-				client: client, ID: rt.Id, Name: rt.DisplayName, IsDefault: rt.Id != nil && defaultIDs[*rt.Id],
+				client: client, ID: rt.Id, Name: rt.DisplayName, IsDefault: isDefault,
 			})
 		}
 		if resp.OpcNextPage == nil {
