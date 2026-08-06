@@ -62,14 +62,16 @@ for the earliest time OCI accepts rather than taking the 30-day default, but a f
 nuked compartment still lists these in `PENDING_DELETION` until their time comes. Nothing
 blocks re-provisioning in the meantime.
 
-For vaults and keys this changes the calculus, which is why **`OCIVault`, `OCIKey` and
-`OCICertificateAuthority` are excluded in the shipped `config.yaml`**: an HSM-protected key
-version is billed for the whole seven days it spends waiting, so nuking it frees nothing on
-a same-day rebuild - it just guarantees a week of paying for something undeletable, every
-cycle. The types are implemented so you can sweep them deliberately (comment the excludes
-out, `--include OCIVault --include OCIKey --include OCICertificateAuthority`) rather than
-on every teardown. An exclude in the config always beats an `--include` on the command
-line, so it has to be the comment, not the flag.
+It is tempting to exclude vaults, keys and CAs for that reason - an HSM key version is
+billed for the whole seven days it spends waiting, so deleting it appears to buy nothing on
+a same-day rebuild. **Don't, unless the rebuild can adopt what you kept.** A nuke that also
+removes the terraform state leaves the survivors with nothing referencing them: the rebuild
+creates a fresh vault, keys and CA under a new random suffix and the old set is orphaned.
+Seven days of pending deletion costs about $0.12 per key version; an orphan costs about
+$0.53 a month indefinitely, and you get another one every rebuild.
+
+If you do want to keep them, an exclude in the config always beats an `--include` on the
+command line, so it has to be commented out rather than overridden with a flag.
 
 Note that the vault is not purely a terraform concern: `entigo-infralib-agent` creates its
 own `<prefix>-infralib` vault and key during bootstrap, before any module runs.
