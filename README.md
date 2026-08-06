@@ -54,8 +54,10 @@ and `oracle/oke-node-pool` terraform modules create:
 ### Nothing in the crypto stack deletes immediately
 
 OCI will only ever *schedule* deletion for a certificate, CA, vault or key, and it
-enforces a minimum wait: 24 hours for certificates and CAs ("less than minimum 1440 even
-after allowable clock skew 5"), and **7 days** for vaults and keys. `oci-nuke` always asks
+enforces a minimum wait: 24 hours for a certificate ("less than minimum 1440 even after
+allowable clock skew 5") and **7 days** for a CA, a vault or a key - the CA is the odd one
+out, since it reads like a certificate but is held to a vault's patience ("minimum
+10080"). `oci-nuke` always asks
 for the earliest time OCI accepts rather than taking the 30-day default, but a freshly
 nuked compartment still lists these in `PENDING_DELETION` until their time comes. Nothing
 blocks re-provisioning in the meantime.

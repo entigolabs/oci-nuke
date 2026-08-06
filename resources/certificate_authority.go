@@ -79,12 +79,12 @@ type CertificateAuthority struct {
 	Name   *string
 }
 
-// Same 24-hour floor as a certificate: the SDK does not document a minimum on
-// ScheduleCertificateAuthorityDeletionDetails, but the certificate call rejects anything
-// under 1440 minutes and there is no reason to expect a CA to be treated more leniently.
-// An hour of margin covers a slow request or a skewed clock. Omitting the time entirely
-// would default to 30 days.
-const certificateAuthorityMinRetention = 25 * time.Hour
+// A CA is NOT the 24 hours a certificate gets - it is 7 days, the same as a vault or key.
+// The SDK documents no minimum at all, and assuming the certificate's 1440 minutes earns
+// "ScheduledTimeOfDeletion ... is less than minimum 10080 even after allowable clock skew
+// 5" from the live API. Two hours of margin covers a slow request or a skewed clock;
+// omitting the time entirely would default to 30 days.
+const certificateAuthorityMinRetention = 7*24*time.Hour + 2*time.Hour
 
 func (r *CertificateAuthority) Remove(ctx context.Context) error {
 	deleteAt := time.Now().Add(certificateAuthorityMinRetention)

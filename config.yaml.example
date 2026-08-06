@@ -2,8 +2,8 @@ regions:
   - eu-frankfurt-1
 
 # Vaults, keys and certificate authorities are excluded by default, and the reason is cost
-# rather than caution: OCI will only schedule their deletion, 7 days out for a vault or key
-# and ~24h for a CA, and an HSM-protected key version is billed for the whole wait. Nuking
+# rather than caution: OCI will only schedule their deletion, and never sooner than 7 days
+# out for any of the three, and an HSM-protected key version is billed for the whole wait. Nuking
 # them frees nothing on a same-day rebuild - it just buys a week of paying for something
 # undeletable, on every cycle.
 #
