@@ -13,6 +13,7 @@ import (
 	"github.com/oracle/oci-go-sdk/v65/devops"
 	"github.com/oracle/oci-go-sdk/v65/dns"
 	"github.com/oracle/oci-go-sdk/v65/identity"
+	"github.com/oracle/oci-go-sdk/v65/keymanagement"
 	"github.com/oracle/oci-go-sdk/v65/loadbalancer"
 	"github.com/oracle/oci-go-sdk/v65/logging"
 	"github.com/oracle/oci-go-sdk/v65/objectstorage"
@@ -107,6 +108,22 @@ func containerEngineClient(o *nuke.ListerOpts) (containerengine.ContainerEngineC
 	}
 	client.SetRegion(o.Region)
 	return client, nil
+}
+
+func kmsVaultClient(o *nuke.ListerOpts) (keymanagement.KmsVaultClient, error) {
+	client, err := keymanagement.NewKmsVaultClientWithConfigurationProvider(o.Provider)
+	if err != nil {
+		return client, err
+	}
+	client.SetRegion(o.Region)
+	return client, nil
+}
+
+// Unlike every other client here this one is per-vault, not per-region: key operations go
+// to the vault's own management endpoint, which is only known once the vault is listed.
+// SetRegion is therefore deliberately not called - the endpoint already carries it.
+func kmsManagementClient(o *nuke.ListerOpts, endpoint string) (keymanagement.KmsManagementClient, error) {
+	return keymanagement.NewKmsManagementClientWithConfigurationProvider(o.Provider, endpoint)
 }
 
 func dnsClient(o *nuke.ListerOpts) (dns.DnsClient, error) {

@@ -46,19 +46,34 @@ and `oracle/oke-node-pool` terraform modules create:
 * Kubernetes Engine (OKE): Cluster, Node Pool
 * DevOps: Project, Deploy Pipeline, Build Pipeline
 * Notifications: ONS Topic
-* IAM: Dynamic Group, Policy, Customer Secret Key
+* IAM: Dynamic Group, Policy, Customer Secret Key, User, Group
 * Certificates: Certificate (created out-of-band by the native ingress controller,
-  one per TLS ingress, and never cleaned up by it)
+  one per TLS ingress, and never cleaned up by it), Certificate Authority
+* Vault: Vault, Key
 
-One caveat worth knowing about: OCI certificates cannot be deleted immediately, only
-*scheduled* for deletion, and the service enforces a 24-hour minimum ("less than minimum
-1440 even after allowable clock skew 5"). `oci-nuke` schedules them at the earliest time
-OCI accepts rather than accepting the 30-day default, so a freshly nuked compartment
-still lists one `PENDING_DELETION` certificate per TLS ingress that existed, disappearing
-about a day later. Nothing blocks re-provisioning in the meantime.
+### Nothing in the crypto stack deletes immediately
 
-As entigo-infralib's Oracle module set grows further (Vault, etc.), this list needs to
-keep growing with it. Contributions and issues welcome.
+OCI will only ever *schedule* deletion for a certificate, CA, vault or key, and it
+enforces a minimum wait: 24 hours for certificates and CAs ("less than minimum 1440 even
+after allowable clock skew 5"), and **7 days** for vaults and keys. `oci-nuke` always asks
+for the earliest time OCI accepts rather than taking the 30-day default, but a freshly
+nuked compartment still lists these in `PENDING_DELETION` until their time comes. Nothing
+blocks re-provisioning in the meantime.
+
+For vaults and keys this changes the calculus, which is why **`OCIVault`, `OCIKey` and
+`OCICertificateAuthority` are excluded in the shipped `config.yaml`**: an HSM-protected key
+version is billed for the whole seven days it spends waiting, so nuking it frees nothing on
+a same-day rebuild - it just guarantees a week of paying for something undeletable, every
+cycle. The types are implemented so you can sweep them deliberately (comment the excludes
+out, `--include OCIVault --include OCIKey --include OCICertificateAuthority`) rather than
+on every teardown. An exclude in the config always beats an `--include` on the command
+line, so it has to be the comment, not the flag.
+
+Note that the vault is not purely a terraform concern: `entigo-infralib-agent` creates its
+own `<prefix>-infralib` vault and key during bootstrap, before any module runs.
+
+As entigo-infralib's Oracle module set grows further, this list needs to keep growing with
+it. Contributions and issues welcome.
 
 ## Requirements
 

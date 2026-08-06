@@ -1,6 +1,21 @@
 regions:
   - eu-frankfurt-1
 
+# Vaults, keys and certificate authorities are excluded by default, and the reason is cost
+# rather than caution: OCI will only schedule their deletion, 7 days out for a vault or key
+# and ~24h for a CA, and an HSM-protected key version is billed for the whole wait. Nuking
+# them frees nothing on a same-day rebuild - it just buys a week of paying for something
+# undeletable, on every cycle.
+#
+# To sweep them deliberately, comment these out and run with
+#   --include OCIVault --include OCIKey --include OCICertificateAuthority
+# (an exclude here always beats an --include on the command line).
+resource-types:
+  excludes:
+    - OCIVault
+    - OCIKey
+    - OCICertificateAuthority
+
 # Every compartment you intend to nuke must be declared here explicitly - this is a
 # safety net, not a discovery mechanism. oci-nuke refuses to run against an
 # undeclared compartment.

@@ -1,0 +1,109 @@
+package resources
+
+import (
+	"context"
+	"time"
+
+	"github.com/ekristen/libnuke/pkg/registry"
+	"github.com/ekristen/libnuke/pkg/resource"
+	"github.com/ekristen/libnuke/pkg/types"
+	"github.com/oracle/oci-go-sdk/v65/certificatesmanagement"
+	"github.com/oracle/oci-go-sdk/v65/common"
+
+	"github.com/entigolabs/oci-nuke/pkg/nuke"
+)
+
+const CertificateAuthorityResource = "OCICertificateAuthority"
+
+// The root CA that modules/oracle/dns creates to issue the zone's wildcard certificate,
+// signed with the HSM key from modules/oracle/kms.
+//
+// Deliberately excluded in config.yaml for the Entigo deployment - see the comment there.
+// It is implemented anyway so the type exists for anyone who does want it swept, and so
+// that a compartment being handed back is not left holding a CA nobody can account for.
+func init() {
+	registry.Register(&registry.Registration{
+		Name:  CertificateAuthorityResource,
+		Scope: nuke.Compartment,
+		// Certificates the CA issued have to go first. Note that "first" here only means
+		// scheduled - a certificate sits in PENDING_DELETION for ~24h - so if OCI insists
+		// on the certificates being fully gone rather than merely scheduled, the CA will
+		// fail this run and needs a second nuke the next day. Nothing is left in a broken
+		// state either way.
+		DependsOn: []string{CertificateResource},
+		Resource:  &CertificateAuthority{},
+		Lister:    &CertificateAuthorityLister{},
+	})
+}
+
+type CertificateAuthorityLister struct{}
+
+func (l *CertificateAuthorityLister) List(ctx context.Context, o interface{}) ([]resource.Resource, error) {
+	opts := o.(*nuke.ListerOpts)
+	client, err := certificatesManagementClient(opts)
+	if err != nil {
+		return nil, err
+	}
+
+	var resources []resource.Resource
+	page := ""
+	for {
+		resp, err := client.ListCertificateAuthorities(ctx, certificatesmanagement.ListCertificateAuthoritiesRequest{
+			CompartmentId: &opts.CompartmentID,
+			Page:          strPtrOrNil(page),
+		})
+		if err != nil {
+			return nil, err
+		}
+		for _, ca := range resp.Items {
+			switch ca.LifecycleState {
+			case certificatesmanagement.CertificateAuthorityLifecycleStateDeleted,
+				certificatesmanagement.CertificateAuthorityLifecycleStateDeleting,
+				certificatesmanagement.CertificateAuthorityLifecycleStateSchedulingDeletion,
+				certificatesmanagement.CertificateAuthorityLifecycleStatePendingDeletion:
+				continue
+			}
+			resources = append(resources, &CertificateAuthority{client: client, ID: ca.Id, Name: ca.Name})
+		}
+		if resp.OpcNextPage == nil {
+			break
+		}
+		page = *resp.OpcNextPage
+	}
+	return resources, nil
+}
+
+type CertificateAuthority struct {
+	client certificatesmanagement.CertificatesManagementClient
+	ID     *string
+	Name   *string
+}
+
+// Same 24-hour floor as a certificate: the SDK does not document a minimum on
+// ScheduleCertificateAuthorityDeletionDetails, but the certificate call rejects anything
+// under 1440 minutes and there is no reason to expect a CA to be treated more leniently.
+// An hour of margin covers a slow request or a skewed clock. Omitting the time entirely
+// would default to 30 days.
+const certificateAuthorityMinRetention = 25 * time.Hour
+
+func (r *CertificateAuthority) Remove(ctx context.Context) error {
+	deleteAt := time.Now().Add(certificateAuthorityMinRetention)
+	_, err := r.client.ScheduleCertificateAuthorityDeletion(ctx, certificatesmanagement.ScheduleCertificateAuthorityDeletionRequest{
+		CertificateAuthorityId: r.ID,
+		ScheduleCertificateAuthorityDeletionDetails: certificatesmanagement.ScheduleCertificateAuthorityDeletionDetails{
+			TimeOfDeletion: &common.SDKTime{Time: deleteAt},
+		},
+	})
+	return err
+}
+
+func (r *CertificateAuthority) Properties() types.Properties {
+	return types.NewPropertiesFromStruct(r)
+}
+
+func (r *CertificateAuthority) String() string {
+	if r.Name != nil {
+		return *r.Name
+	}
+	return *r.ID
+}
