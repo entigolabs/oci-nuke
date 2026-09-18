@@ -53,9 +53,12 @@ func (l *CertificateLister) List(ctx context.Context, o interface{}) ([]resource
 			switch c.LifecycleState {
 			case certificatesmanagement.CertificateLifecycleStateDeleted,
 				certificatesmanagement.CertificateLifecycleStateDeleting,
-				certificatesmanagement.CertificateLifecycleStateSchedulingDeletion,
-				certificatesmanagement.CertificateLifecycleStatePendingDeletion:
+				certificatesmanagement.CertificateLifecycleStateSchedulingDeletion:
 				continue
+			case certificatesmanagement.CertificateLifecycleStatePendingDeletion:
+				if !scheduledLaterThanNecessary(c.TimeOfDeletion, certificateMinRetention) {
+					continue
+				}
 			}
 			resources = append(resources, &Certificate{client: client, ID: c.Id, Name: c.Name})
 		}
@@ -76,27 +79,45 @@ type Certificate struct {
 // certificateMinRetention is OCI's mandatory minimum delay before a scheduled
 // certificate deletion may take effect. The API is explicit about it: scheduling any
 // sooner fails with "ScheduledTimeOfDeletion ... is less than minimum 1440 even after
-// allowable clock skew 5". A little margin is added on top of the 24 hours so a slow
-// request or a skewed local clock can't land under the limit.
-const certificateMinRetention = 25 * time.Hour
+// allowable clock skew 5", so the earliest it accepts is 1440 minutes plus the five
+// minutes of skew it says it allows for.
+const certificateMinRetention = 24*time.Hour + scheduledDeletionSkew
 
 // A certificate can only ever be *scheduled* for deletion, never deleted outright, so it
-// necessarily outlives the nuke - it sits in PENDING_DELETION until the scheduled time
-// and OCI then removes it. Passing no TimeOfDeletion at all defaults to 30 days, so an
-// explicit earliest-allowed time is used instead to keep the leftover window to ~1 day.
-// Consequence: a nuked compartment legitimately still lists one PENDING_DELETION
-// certificate per TLS ingress that existed. Nothing blocks a fresh provision, and once
-// scheduled the deletion cannot be re-scheduled (IncorrectState) without cancelling
-// first, so re-running the nuke leaves the existing schedule alone.
+// necessarily outlives the nuke - it sits in PENDING_DELETION until the scheduled date
+// and OCI removes it then. A nuked compartment therefore legitimately still lists one
+// PENDING_DELETION certificate per TLS ingress that existed, and nothing blocks a fresh
+// provision in the meantime. What the run does guarantee is the date: see
+// scheduled_deletion.go for why it is read back rather than assumed, and why a
+// certificate already scheduled further out than that gets its schedule replaced.
 func (r *Certificate) Remove(ctx context.Context) error {
-	deleteAt := time.Now().Add(certificateMinRetention)
-	_, err := r.client.ScheduleCertificateDeletion(ctx, certificatesmanagement.ScheduleCertificateDeletionRequest{
-		CertificateId: r.ID,
-		ScheduleCertificateDeletionDetails: certificatesmanagement.ScheduleCertificateDeletionDetails{
-			TimeOfDeletion: &common.SDKTime{Time: deleteAt},
+	return deletionSchedule{
+		minRetention: certificateMinRetention,
+		read: func(ctx context.Context) (string, *common.SDKTime, error) {
+			resp, err := r.client.GetCertificate(ctx, certificatesmanagement.GetCertificateRequest{
+				CertificateId: r.ID,
+			})
+			if err != nil {
+				return "", nil, err
+			}
+			return string(resp.LifecycleState), resp.TimeOfDeletion, nil
 		},
-	})
-	return err
+		schedule: func(ctx context.Context, at time.Time) error {
+			_, err := r.client.ScheduleCertificateDeletion(ctx, certificatesmanagement.ScheduleCertificateDeletionRequest{
+				CertificateId: r.ID,
+				ScheduleCertificateDeletionDetails: certificatesmanagement.ScheduleCertificateDeletionDetails{
+					TimeOfDeletion: &common.SDKTime{Time: at},
+				},
+			})
+			return err
+		},
+		cancel: func(ctx context.Context) error {
+			_, err := r.client.CancelCertificateDeletion(ctx, certificatesmanagement.CancelCertificateDeletionRequest{
+				CertificateId: r.ID,
+			})
+			return err
+		},
+	}.ensure(ctx)
 }
 
 func (r *Certificate) Properties() types.Properties {

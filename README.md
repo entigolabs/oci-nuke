@@ -57,10 +57,36 @@ OCI will only ever *schedule* deletion for a certificate, CA, vault or key, and 
 enforces a minimum wait: 24 hours for a certificate ("less than minimum 1440 even after
 allowable clock skew 5") and **7 days** for a CA, a vault or a key - the CA is the odd one
 out, since it reads like a certificate but is held to a vault's patience ("minimum
-10080"). `oci-nuke` always asks
-for the earliest time OCI accepts rather than taking the 30-day default, but a freshly
-nuked compartment still lists these in `PENDING_DELETION` until their time comes. Nothing
-blocks re-provisioning in the meantime.
+10080"). `oci-nuke` asks for the earliest date each service accepts, its minimum plus the
+five minutes of clock skew the certificates service says it allows for, rather than the
+long default that comes of naming no date at all. A freshly nuked compartment therefore
+still lists these in `PENDING_DELETION` until their date comes, and nothing blocks
+re-provisioning in the meantime.
+
+The date is read back rather than assumed. A schedule request returns 200 without
+promising it kept the date it was given: a certificate asked for 24h05m came back holding
+a date seven and a half days out, and one scheduled with no date at all comes back ten
+days out, not the thirty the API documents. Each run reads the resource after scheduling
+it, withdraws and re-issues a date that is further out than the one it asked for, and
+fails the resource with the date OCI actually kept if it will not take ours.
+
+That also means a schedule someone else made is not final. A certificate or CA deleted
+without an explicit date - by the console, by a terraform destroy, or by an `oci-nuke`
+build from before this was set - is picked up by a later run and pulled in to the earliest
+allowed date. (Vaults and keys are not: a vault already pending deletion no longer serves
+the management endpoint its keys are enumerated through.)
+
+A CA is the one that cannot be finished in a single run at all. OCI refuses to schedule
+one while the certificates it issued still exist - `409 Conflict: ... cannot be scheduled
+for deletion because subordinate CAs or certificates exist` - and those certificates are
+only ever *scheduled*, so they exist for another day. A compartment holding certificates
+therefore ends its nuke with the CA failed and a non-zero exit, and needs a second run the
+day after. That is deliberate rather than a rough edge: the CA is billed while it stands,
+and a run that exits 0 with one still there reads as a clean sweep.
+
+The run itself does not wait for any of these dates. A resource whose schedule is correct
+stops being listed, which is how libnuke marks an item finished, so the nuke ends in the
+time the API calls take - not the day or the week until the deletion is due.
 
 It is tempting to exclude vaults, keys and CAs for that reason - an HSM key version is
 billed for the whole seven days it spends waiting, so deleting it appears to buy nothing on

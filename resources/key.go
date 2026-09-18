@@ -95,21 +95,36 @@ type Key struct {
 }
 
 // keyMinRetention is the floor OCI puts on a scheduled key deletion: "the specified time
-// must be between 7 and 30 days from when the request is received". An hour of margin
-// keeps a slow request or a skewed clock off the boundary. Without an explicit time the
-// default is the 30-day maximum, which is the worst outcome for a key that is billed
-// while it waits.
-const keyMinRetention = 7*24*time.Hour + time.Hour
+// must be between 7 and 30 days from when the request is received". Without an explicit
+// time the default is the 30-day maximum, the worst outcome for a key that is billed
+// while it waits. The five minutes cover the flight time of the request itself.
+const keyMinRetention = 7*24*time.Hour + scheduledDeletionSkew
 
+// Same handling as a certificate, for the same reasons - see scheduled_deletion.go.
 func (r *Key) Remove(ctx context.Context) error {
-	deleteAt := time.Now().Add(keyMinRetention)
-	_, err := r.client.ScheduleKeyDeletion(ctx, keymanagement.ScheduleKeyDeletionRequest{
-		KeyId: r.ID,
-		ScheduleKeyDeletionDetails: keymanagement.ScheduleKeyDeletionDetails{
-			TimeOfDeletion: &common.SDKTime{Time: deleteAt},
+	return deletionSchedule{
+		minRetention: keyMinRetention,
+		read: func(ctx context.Context) (string, *common.SDKTime, error) {
+			resp, err := r.client.GetKey(ctx, keymanagement.GetKeyRequest{KeyId: r.ID})
+			if err != nil {
+				return "", nil, err
+			}
+			return string(resp.LifecycleState), resp.TimeOfDeletion, nil
 		},
-	})
-	return err
+		schedule: func(ctx context.Context, at time.Time) error {
+			_, err := r.client.ScheduleKeyDeletion(ctx, keymanagement.ScheduleKeyDeletionRequest{
+				KeyId: r.ID,
+				ScheduleKeyDeletionDetails: keymanagement.ScheduleKeyDeletionDetails{
+					TimeOfDeletion: &common.SDKTime{Time: at},
+				},
+			})
+			return err
+		},
+		cancel: func(ctx context.Context) error {
+			_, err := r.client.CancelKeyDeletion(ctx, keymanagement.CancelKeyDeletionRequest{KeyId: r.ID})
+			return err
+		},
+	}.ensure(ctx)
 }
 
 func (r *Key) Properties() types.Properties {
