@@ -63,6 +63,12 @@ allows for - rather than taking the long service default, but a freshly nuked co
 still lists these in `PENDING_DELETION` until their time comes. Nothing blocks
 re-provisioning in the meantime.
 
+A certificate that is *already* scheduled is left alone only if its date is no later than
+the one `oci-nuke` would ask for. One that was deleted without an explicit time - by the
+console, by terraform, or by an `oci-nuke` build from before this was set - sits pending
+for ten days; the run cancels that schedule and re-issues it at the earliest allowed time,
+so re-running the tool fixes a certificate that is already waiting out a long window.
+
 It is tempting to exclude vaults, keys and CAs for that reason - an HSM key version is
 billed for the whole seven days it spends waiting, so deleting it appears to buy nothing on
 a same-day rebuild. **Don't, unless the rebuild can adopt what you kept.** A nuke that also
