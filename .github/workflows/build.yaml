@@ -23,7 +23,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      # contents: write is needed to create the release and its tag.
+      contents: write
       packages: write
     steps:
       - uses: actions/checkout@v6
@@ -58,3 +59,22 @@ jobs:
             -t "${IMAGE}:${VERSION}" \
             .
           echo "- \`${IMAGE}:${VERSION}\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          # generate_release_notes lets GitHub write the changelog from the pull
+          # requests and commits since the previous release. body is prepended
+          # to what it generates, rather than replacing it.
+          URL=$(gh api "/repos/${GITHUB_REPOSITORY}/releases" \
+            --method POST \
+            -f tag_name="v${VERSION}" \
+            -f target_commitish="${GITHUB_SHA}" \
+            -f name="v${VERSION}" \
+            -f body="Container image: \`${IMAGE}:${VERSION}\`" \
+            -F generate_release_notes=true \
+            --jq '.html_url')
+          echo "- Release [\`v${VERSION}\`](${URL})" >> "$GITHUB_STEP_SUMMARY"
