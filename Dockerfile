@@ -19,3 +19,4 @@ RUN apk add --no-cache ca-certificates && \
 COPY --from=build /oci-nuke /usr/local/bin/oci-nuke
 USER oci-nuke
 ENTRYPOINT ["/usr/local/bin/oci-nuke"]
+
