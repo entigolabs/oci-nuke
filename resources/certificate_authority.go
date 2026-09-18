@@ -59,9 +59,12 @@ func (l *CertificateAuthorityLister) List(ctx context.Context, o interface{}) ([
 			switch ca.LifecycleState {
 			case certificatesmanagement.CertificateAuthorityLifecycleStateDeleted,
 				certificatesmanagement.CertificateAuthorityLifecycleStateDeleting,
-				certificatesmanagement.CertificateAuthorityLifecycleStateSchedulingDeletion,
-				certificatesmanagement.CertificateAuthorityLifecycleStatePendingDeletion:
+				certificatesmanagement.CertificateAuthorityLifecycleStateSchedulingDeletion:
 				continue
+			case certificatesmanagement.CertificateAuthorityLifecycleStatePendingDeletion:
+				if !scheduledLaterThanNecessary(ca.TimeOfDeletion, certificateAuthorityMinRetention) {
+					continue
+				}
 			}
 			resources = append(resources, &CertificateAuthority{client: client, ID: ca.Id, Name: ca.Name})
 		}
@@ -82,19 +85,38 @@ type CertificateAuthority struct {
 // A CA is NOT the 24 hours a certificate gets - it is 7 days, the same as a vault or key.
 // The SDK documents no minimum at all, and assuming the certificate's 1440 minutes earns
 // "ScheduledTimeOfDeletion ... is less than minimum 10080 even after allowable clock skew
-// 5" from the live API. Two hours of margin covers a slow request or a skewed clock;
-// omitting the time entirely would default to 30 days.
-const certificateAuthorityMinRetention = 7*24*time.Hour + 2*time.Hour
+// 5" from the live API, so the earliest it accepts is 10080 minutes plus that skew.
+const certificateAuthorityMinRetention = 7*24*time.Hour + scheduledDeletionSkew
 
+// Same handling as a certificate, for the same reasons - see scheduled_deletion.go.
 func (r *CertificateAuthority) Remove(ctx context.Context) error {
-	deleteAt := time.Now().Add(certificateAuthorityMinRetention)
-	_, err := r.client.ScheduleCertificateAuthorityDeletion(ctx, certificatesmanagement.ScheduleCertificateAuthorityDeletionRequest{
-		CertificateAuthorityId: r.ID,
-		ScheduleCertificateAuthorityDeletionDetails: certificatesmanagement.ScheduleCertificateAuthorityDeletionDetails{
-			TimeOfDeletion: &common.SDKTime{Time: deleteAt},
+	return deletionSchedule{
+		minRetention: certificateAuthorityMinRetention,
+		read: func(ctx context.Context) (string, *common.SDKTime, error) {
+			resp, err := r.client.GetCertificateAuthority(ctx, certificatesmanagement.GetCertificateAuthorityRequest{
+				CertificateAuthorityId: r.ID,
+			})
+			if err != nil {
+				return "", nil, err
+			}
+			return string(resp.LifecycleState), resp.TimeOfDeletion, nil
 		},
-	})
-	return err
+		schedule: func(ctx context.Context, at time.Time) error {
+			_, err := r.client.ScheduleCertificateAuthorityDeletion(ctx, certificatesmanagement.ScheduleCertificateAuthorityDeletionRequest{
+				CertificateAuthorityId: r.ID,
+				ScheduleCertificateAuthorityDeletionDetails: certificatesmanagement.ScheduleCertificateAuthorityDeletionDetails{
+					TimeOfDeletion: &common.SDKTime{Time: at},
+				},
+			})
+			return err
+		},
+		cancel: func(ctx context.Context) error {
+			_, err := r.client.CancelCertificateAuthorityDeletion(ctx, certificatesmanagement.CancelCertificateAuthorityDeletionRequest{
+				CertificateAuthorityId: r.ID,
+			})
+			return err
+		},
+	}.ensure(ctx)
 }
 
 func (r *CertificateAuthority) Properties() types.Properties {

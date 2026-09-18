@@ -101,17 +101,33 @@ type Vault struct {
 
 // Same 7-to-30-day window as a key, and the same reason for naming the earliest allowed
 // time explicitly rather than accepting the 30-day default.
-const vaultMinRetention = 7*24*time.Hour + time.Hour
+const vaultMinRetention = 7*24*time.Hour + scheduledDeletionSkew
 
+// Same handling as a certificate, for the same reasons - see scheduled_deletion.go.
 func (r *Vault) Remove(ctx context.Context) error {
-	deleteAt := time.Now().Add(vaultMinRetention)
-	_, err := r.client.ScheduleVaultDeletion(ctx, keymanagement.ScheduleVaultDeletionRequest{
-		VaultId: r.ID,
-		ScheduleVaultDeletionDetails: keymanagement.ScheduleVaultDeletionDetails{
-			TimeOfDeletion: &common.SDKTime{Time: deleteAt},
+	return deletionSchedule{
+		minRetention: vaultMinRetention,
+		read: func(ctx context.Context) (string, *common.SDKTime, error) {
+			resp, err := r.client.GetVault(ctx, keymanagement.GetVaultRequest{VaultId: r.ID})
+			if err != nil {
+				return "", nil, err
+			}
+			return string(resp.LifecycleState), resp.TimeOfDeletion, nil
 		},
-	})
-	return err
+		schedule: func(ctx context.Context, at time.Time) error {
+			_, err := r.client.ScheduleVaultDeletion(ctx, keymanagement.ScheduleVaultDeletionRequest{
+				VaultId: r.ID,
+				ScheduleVaultDeletionDetails: keymanagement.ScheduleVaultDeletionDetails{
+					TimeOfDeletion: &common.SDKTime{Time: at},
+				},
+			})
+			return err
+		},
+		cancel: func(ctx context.Context) error {
+			_, err := r.client.CancelVaultDeletion(ctx, keymanagement.CancelVaultDeletionRequest{VaultId: r.ID})
+			return err
+		},
+	}.ensure(ctx)
 }
 
 func (r *Vault) Properties() types.Properties {

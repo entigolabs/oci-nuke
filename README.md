@@ -57,17 +57,28 @@ OCI will only ever *schedule* deletion for a certificate, CA, vault or key, and 
 enforces a minimum wait: 24 hours for a certificate ("less than minimum 1440 even after
 allowable clock skew 5") and **7 days** for a CA, a vault or a key - the CA is the odd one
 out, since it reads like a certificate but is held to a vault's patience ("minimum
-10080"). `oci-nuke` always asks for the earliest time OCI accepts - a certificate goes
-out at the 1440-minute minimum plus the five minutes of clock skew the service says it
-allows for - rather than taking the long service default, but a freshly nuked compartment
-still lists these in `PENDING_DELETION` until their time comes. Nothing blocks
+10080"). `oci-nuke` asks for the earliest date each service accepts, its minimum plus the
+five minutes of clock skew the certificates service says it allows for, rather than the
+long default that comes of naming no date at all. A freshly nuked compartment therefore
+still lists these in `PENDING_DELETION` until their date comes, and nothing blocks
 re-provisioning in the meantime.
 
-A certificate that is *already* scheduled is left alone only if its date is no later than
-the one `oci-nuke` would ask for. One that was deleted without an explicit time - by the
-console, by terraform, or by an `oci-nuke` build from before this was set - sits pending
-for ten days; the run cancels that schedule and re-issues it at the earliest allowed time,
-so re-running the tool fixes a certificate that is already waiting out a long window.
+The date is read back rather than assumed. A schedule request returns 200 without
+promising it kept the date it was given: a certificate asked for 24h05m came back holding
+a date seven and a half days out, and one scheduled with no date at all comes back ten
+days out, not the thirty the API documents. Each run reads the resource after scheduling
+it, withdraws and re-issues a date that is further out than the one it asked for, and
+fails the resource with the date OCI actually kept if it will not take ours.
+
+That also means a schedule someone else made is not final. A certificate or CA deleted
+without an explicit date - by the console, by a terraform destroy, or by an `oci-nuke`
+build from before this was set - is picked up by a later run and pulled in to the earliest
+allowed date. (Vaults and keys are not: a vault already pending deletion no longer serves
+the management endpoint its keys are enumerated through.)
+
+The run itself does not wait for any of these dates. A resource whose schedule is correct
+stops being listed, which is how libnuke marks an item finished, so the nuke ends in the
+time the API calls take - not the day or the week until the deletion is due.
 
 It is tempting to exclude vaults, keys and CAs for that reason - an HSM key version is
 billed for the whole seven days it spends waiting, so deleting it appears to buy nothing on
