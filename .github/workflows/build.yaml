@@ -1,5 +1,11 @@
 name: Release
 
+# Standalone rather than a call into entigolabs/cicd-workflows: that library
+# lives in a private repository, and GitHub does not allow a public repository
+# to use actions or reusable workflows from a private one. The conventions it
+# would apply are reproduced here by hand — version 0.1.<run_number>, carried
+# by the image tag, multi-arch with SBOM and provenance.
+
 on:
   push:
     branches:
@@ -10,10 +16,45 @@ on:
       - '.gitignore'
   workflow_dispatch:
 
-# No secrets block: the image goes to GHCR, which the shared workflow
-# authenticates with the run's own token.
+env:
+  IMAGE: ghcr.io/entigolabs/oci-nuke
+
 jobs:
   build:
-    uses: entigolabs/cicd-workflows/.github/workflows/build-publish.yaml@v1
-    with:
-      image: ghcr.io/entigolabs/oci-nuke
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Resolve version
+        id: version
+        run: |
+          set -euo pipefail
+          VERSION="0.1.${GITHUB_RUN_NUMBER}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Image tag ${VERSION}"
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Build and push image
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          docker buildx build --push \
+            --platform linux/arm64/v8,linux/amd64 \
+            --sbom=true \
+            --provenance=mode=max \
+            -t "${IMAGE}:${VERSION}" \
+            .
+          echo "- \`${IMAGE}:${VERSION}\`" >> "$GITHUB_STEP_SUMMARY"
