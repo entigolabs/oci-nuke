@@ -1,0 +1,12 @@
+name: Pull
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  testbuild:
+    uses: entigolabs/cicd-workflows/.github/workflows/pr-build.yaml@v1
+    with:
+      image: ghcr.io/entigolabs/oci-nuke

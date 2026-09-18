@@ -1,0 +1,19 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - 'README.md'
+      - 'LICENSE'
+      - '.gitignore'
+  workflow_dispatch:
+
+# No secrets block: the image goes to GHCR, which the shared workflow
+# authenticates with the run's own token.
+jobs:
+  build:
+    uses: entigolabs/cicd-workflows/.github/workflows/build-publish.yaml@v1
+    with:
+      image: ghcr.io/entigolabs/oci-nuke
