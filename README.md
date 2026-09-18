@@ -76,6 +76,14 @@ build from before this was set - is picked up by a later run and pulled in to th
 allowed date. (Vaults and keys are not: a vault already pending deletion no longer serves
 the management endpoint its keys are enumerated through.)
 
+A CA is the one that cannot be finished in a single run at all. OCI refuses to schedule
+one while the certificates it issued still exist - `409 Conflict: ... cannot be scheduled
+for deletion because subordinate CAs or certificates exist` - and those certificates are
+only ever *scheduled*, so they exist for another day. A compartment holding certificates
+therefore ends its nuke with the CA failed and a non-zero exit, and needs a second run the
+day after. That is deliberate rather than a rough edge: the CA is billed while it stands,
+and a run that exits 0 with one still there reads as a clean sweep.
+
 The run itself does not wait for any of these dates. A resource whose schedule is correct
 stops being listed, which is how libnuke marks an item finished, so the nuke ends in the
 time the API calls take - not the day or the week until the deletion is due.

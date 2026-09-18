@@ -25,11 +25,19 @@ func init() {
 	registry.Register(&registry.Registration{
 		Name:  CertificateAuthorityResource,
 		Scope: nuke.Compartment,
-		// Certificates the CA issued have to go first. Note that "first" here only means
-		// scheduled - a certificate sits in PENDING_DELETION for ~24h - so if OCI insists
-		// on the certificates being fully gone rather than merely scheduled, the CA will
-		// fail this run and needs a second nuke the next day. Nothing is left in a broken
-		// state either way.
+		// Certificates the CA issued have to go first, and "first" here can only mean
+		// scheduled - a certificate sits in PENDING_DELETION for ~24h. OCI does insist on
+		// them being gone rather than merely scheduled, confirmed against the live API:
+		//
+		//   409 Conflict: The certificate authority (CA) '<name>' ... cannot be scheduled
+		//   for deletion because subordinate CAs or certificates exist.
+		//
+		// So a compartment holding certificates cannot have its CA removed in the same
+		// run, whatever order this dependency puts them in. The CA fails, the run exits
+		// non-zero, and a second nuke the next day - once the certificates are actually
+		// deleted - takes it. That failure is deliberate: a CA left standing is a billed
+		// resource, and a run that exits 0 with one still there reads as a clean sweep.
+		// Nothing is left in a broken state either way.
 		DependsOn: []string{CertificateResource},
 		Resource:  &CertificateAuthority{},
 		Lister:    &CertificateAuthorityLister{},
