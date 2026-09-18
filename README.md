@@ -57,10 +57,11 @@ OCI will only ever *schedule* deletion for a certificate, CA, vault or key, and 
 enforces a minimum wait: 24 hours for a certificate ("less than minimum 1440 even after
 allowable clock skew 5") and **7 days** for a CA, a vault or a key - the CA is the odd one
 out, since it reads like a certificate but is held to a vault's patience ("minimum
-10080"). `oci-nuke` always asks
-for the earliest time OCI accepts rather than taking the 30-day default, but a freshly
-nuked compartment still lists these in `PENDING_DELETION` until their time comes. Nothing
-blocks re-provisioning in the meantime.
+10080"). `oci-nuke` always asks for the earliest time OCI accepts - a certificate goes
+out at the 1440-minute minimum plus the five minutes of clock skew the service says it
+allows for - rather than taking the long service default, but a freshly nuked compartment
+still lists these in `PENDING_DELETION` until their time comes. Nothing blocks
+re-provisioning in the meantime.
 
 It is tempting to exclude vaults, keys and CAs for that reason - an HSM key version is
 billed for the whole seven days it spends waiting, so deleting it appears to buy nothing on
