@@ -1,12 +1,70 @@
 name: Pull
 
+# See build.yaml for why this is standalone rather than a call into
+# entigolabs/cicd-workflows.
+
 on:
   pull_request:
     branches:
       - main
 
+env:
+  IMAGE: ghcr.io/entigolabs/oci-nuke
+
 jobs:
   testbuild:
-    uses: entigolabs/cicd-workflows/.github/workflows/pr-build.yaml@v1
-    with:
-      image: ghcr.io/entigolabs/oci-nuke
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Resolve version
+        id: version
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          set -euo pipefail
+          # A prerelease sorts below the release of the same number, so a pull
+          # request image can never be mistaken for the latest build.
+          VERSION="0.1.${GITHUB_RUN_NUMBER}-pr${PR_NUMBER}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          # A pull request from a fork gets a read-only token, so it can build
+          # but not publish.
+          if [ "$HEAD_REPO" = "$GITHUB_REPOSITORY" ]; then
+            echo "push=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "push=false" >> "$GITHUB_OUTPUT"
+            echo "Fork pull request: building without publishing."
+          fi
+          echo "Image tag ${VERSION}"
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: steps.version.outputs.push == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Build image
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          PUSH: ${{ steps.version.outputs.push }}
+        run: |
+          set -euo pipefail
+          ARGS=(--platform "linux/arm64/v8,linux/amd64")
+          if [ "$PUSH" = "true" ]; then
+            ARGS+=(--push --sbom=true --provenance=mode=max -t "${IMAGE}:${VERSION}")
+          else
+            ARGS+=(--output=type=cacheonly)
+          fi
+          docker buildx build "${ARGS[@]}" .
+          if [ "$PUSH" = "true" ]; then
+            echo "- \`${IMAGE}:${VERSION}\`" >> "$GITHUB_STEP_SUMMARY"
+          fi
