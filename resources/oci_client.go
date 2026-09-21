@@ -16,9 +16,19 @@ import (
 	"github.com/oracle/oci-go-sdk/v65/keymanagement"
 	"github.com/oracle/oci-go-sdk/v65/loadbalancer"
 	"github.com/oracle/oci-go-sdk/v65/logging"
+	"github.com/oracle/oci-go-sdk/v65/networkloadbalancer"
 	"github.com/oracle/oci-go-sdk/v65/objectstorage"
 	"github.com/oracle/oci-go-sdk/v65/ons"
 )
+
+func computeClient(o *nuke.ListerOpts) (core.ComputeClient, error) {
+	client, err := core.NewComputeClientWithConfigurationProvider(o.Provider)
+	if err != nil {
+		return client, err
+	}
+	client.SetRegion(o.Region)
+	return client, nil
+}
 
 func virtualNetworkClient(o *nuke.ListerOpts) (core.VirtualNetworkClient, error) {
 	client, err := core.NewVirtualNetworkClientWithConfigurationProvider(o.Provider)
@@ -94,6 +104,15 @@ func certificatesManagementClient(o *nuke.ListerOpts) (certificatesmanagement.Ce
 
 func loadBalancerClient(o *nuke.ListerOpts) (loadbalancer.LoadBalancerClient, error) {
 	client, err := loadbalancer.NewLoadBalancerClientWithConfigurationProvider(o.Provider)
+	if err != nil {
+		return client, err
+	}
+	client.SetRegion(o.Region)
+	return client, nil
+}
+
+func networkLoadBalancerClient(o *nuke.ListerOpts) (networkloadbalancer.NetworkLoadBalancerClient, error) {
+	client, err := networkloadbalancer.NewNetworkLoadBalancerClientWithConfigurationProvider(o.Provider)
 	if err != nil {
 		return client, err
 	}

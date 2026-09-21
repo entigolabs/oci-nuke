@@ -22,7 +22,7 @@ func init() {
 		// A VNIC keeps its NSG membership until the VNIC itself is gone, so this can't be
 		// removed while an OKE cluster endpoint, node pool, or load balancer (attached to
 		// NSGs via the IngressClass/Service annotations) still references it.
-		DependsOn: []string{OkeClusterResource, OkeNodePoolResource, LoadBalancerResource},
+		DependsOn: []string{OkeClusterResource, OkeNodePoolResource, LoadBalancerResource, NetworkLoadBalancerResource},
 	})
 }
 
