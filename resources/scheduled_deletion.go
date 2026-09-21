@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	liberrors "github.com/ekristen/libnuke/pkg/errors"
 	"github.com/oracle/oci-go-sdk/v65/common"
 )
 
@@ -44,9 +45,8 @@ const (
 	scheduledDeletionSlack = time.Hour
 
 	// A schedule or a cancel is asynchronous: the resource passes through
-	// SCHEDULING_DELETION or CANCELLING_DELETION first. Acting during that window is
-	// what a schedule request with a date of its own appears to come from, so ensure()
-	// waits the transition out instead - seconds in practice.
+	// SCHEDULING_DELETION or CANCELLING_DELETION first, so ensure() waits the transition
+	// out rather than acting during one - seconds in practice.
 	scheduledDeletionSettle = 90 * time.Second
 	scheduledDeletionPoll   = 3 * time.Second
 
@@ -67,6 +67,13 @@ const (
 	stateDeleted            = "DELETED"
 )
 
+// deletionPrecision is the only fractional-second precision the services round-trip. They
+// read the fraction as milliseconds however many digits it has and add it to the whole-second
+// value, so a nanosecond timestamp is recorded hours later than it was asked for. Dropping
+// the fraction is not the alternative: a whole-second timestamp is rejected outright with
+// "Unable to process JSON input".
+const deletionPrecision = time.Millisecond
+
 // deletionSchedule drives one resource's deletion date through the service's three calls.
 type deletionSchedule struct {
 	// minRetention is the earliest the service accepts, counted from now.
@@ -74,6 +81,18 @@ type deletionSchedule struct {
 	read         func(ctx context.Context) (state string, scheduled *common.SDKTime, err error)
 	schedule     func(ctx context.Context, at time.Time) error
 	cancel       func(ctx context.Context) error
+
+	// blockedBy reports whether an error from schedule means the service is refusing
+	// because dependents of this resource still exist, and says so in a form fit to show
+	// a human. That is not a failure: those dependents are themselves already scheduled,
+	// so the block clears on its own and the answer is to run again later, not to fix
+	// anything. ensure turns it into liberrors.ErrHoldResource, which libnuke reports as
+	// `hold` with the reason rather than counting it among the failures.
+	//
+	// Only the recognition is per-service - each words its refusal differently - so this
+	// closure sits beside read/schedule/cancel for the same reason they do. Nil where a
+	// service has no such dependency.
+	blockedBy func(err error) (reason string, ok bool)
 }
 
 // ensure leaves the resource scheduled for deletion at the earliest date the service
@@ -100,7 +119,12 @@ func (d deletionSchedule) ensure(ctx context.Context) error {
 				return err
 			}
 		default:
-			if err := d.schedule(ctx, time.Now().Add(d.minRetention)); err != nil {
+			if err := d.schedule(ctx, time.Now().Add(d.minRetention).UTC().Truncate(deletionPrecision)); err != nil {
+				if d.blockedBy != nil {
+					if reason, ok := d.blockedBy(err); ok {
+						return liberrors.ErrHoldResource(reason)
+					}
+				}
 				return err
 			}
 		}
