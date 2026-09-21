@@ -2,6 +2,9 @@ package resources
 
 import (
 	"context"
+	"errors"
+	"net/http"
+	"strings"
 	"time"
 
 	"github.com/ekristen/libnuke/pkg/registry"
@@ -124,6 +127,7 @@ func (r *CertificateAuthority) Remove(ctx context.Context) error {
 			})
 			return err
 		},
+		blockedBy: certificateAuthorityBlockedByCertificates,
 	}.ensure(ctx)
 }
 
@@ -136,4 +140,25 @@ func (r *CertificateAuthority) String() string {
 		return *r.Name
 	}
 	return *r.ID
+}
+
+// A CA cannot be scheduled for deletion while any certificate it issued still exists, and a
+// certificate that is itself PENDING_DELETION counts as existing for the whole of its own
+// retention. So a CA and its certificates can never go in one run: the certificates are
+// scheduled, and the CA follows once their dates pass.
+//
+// That is the expected order of events rather than something to fix, so it is reported as a
+// hold. The service states it plainly enough to match on:
+//
+//	cannot be scheduled for deletion because subordinate CAs or certificates exist
+func certificateAuthorityBlockedByCertificates(err error) (string, bool) {
+	var svcErr common.ServiceError
+	if !errors.As(err, &svcErr) || svcErr.GetHTTPStatusCode() != http.StatusConflict {
+		return "", false
+	}
+	if !strings.Contains(svcErr.GetMessage(), "subordinate CAs or certificates exist") {
+		return "", false
+	}
+	return "certificates it issued are still within their own deletion retention; " +
+		"the CA can be scheduled once they are gone", true
 }

@@ -2,9 +2,14 @@ package resources
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
+	liberrors "github.com/ekristen/libnuke/pkg/errors"
 	"github.com/oracle/oci-go-sdk/v65/common"
 )
 
@@ -97,6 +102,82 @@ func TestEnsureReportsADateTheServiceWillNotGiveUp(t *testing.T) {
 	t.Log(err)
 }
 
+// The services read the fractional part of a timestamp as milliseconds however many digits
+// it has, and add it to the whole-second value, so a date carrying time.Now()'s nanoseconds
+// is recorded hours later than it was asked for. ensure must send a date the service can
+// round-trip; see deletionPrecision.
+func TestEnsureSendsADateTheServiceCanRoundTrip(t *testing.T) {
+	f := &fakeService{state: "ACTIVE"}
+	d := f.schedule()
+
+	var sent time.Time
+	inner := d.schedule
+	d.schedule = func(ctx context.Context, at time.Time) error {
+		sent = at
+		// What the service does: read the fraction's digits as milliseconds, whatever
+		// their length, and add them to the whole-second value.
+		return inner(ctx, at.Truncate(time.Second).Add(fractionAsMilliseconds(at)))
+	}
+
+	if err := d.ensure(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	if sent.Nanosecond()%int(time.Millisecond) != 0 {
+		t.Fatalf("sent %s, want no precision finer than a millisecond", sent.Format(time.RFC3339Nano))
+	}
+	if out := time.Until(*f.scheduled); out > 25*time.Hour {
+		t.Fatalf("service recorded %s out, want the minimum - the fraction was misread", out)
+	}
+}
+
+// A service refusing because dependents still exist is not a failure: they are themselves
+// already scheduled, so the block clears without anyone doing anything. ensure reports it as
+// a hold, which libnuke keeps out of the failure count.
+func TestEnsureHoldsRatherThanFailsWhenDependentsStillExist(t *testing.T) {
+	f := &fakeService{state: "ACTIVE"}
+	d := f.schedule()
+	d.schedule = func(ctx context.Context, at time.Time) error {
+		return fmt.Errorf("cannot be scheduled for deletion because subordinate CAs or certificates exist")
+	}
+	d.blockedBy = func(err error) (string, bool) {
+		if strings.Contains(err.Error(), "certificates exist") {
+			return "certificates are still within their own retention", true
+		}
+		return "", false
+	}
+
+	err := d.ensure(context.Background())
+
+	var hold liberrors.ErrHoldResource
+	if !errors.As(err, &hold) {
+		t.Fatalf("got %T (%v), want ErrHoldResource so libnuke reports it as hold", err, err)
+	}
+	if !strings.Contains(hold.Error(), "retention") {
+		t.Fatalf("hold reason %q does not say why", hold.Error())
+	}
+}
+
+// Anything the predicate does not recognise is still a failure.
+func TestEnsureStillFailsOnAnUnrecognisedError(t *testing.T) {
+	f := &fakeService{state: "ACTIVE"}
+	d := f.schedule()
+	d.schedule = func(ctx context.Context, at time.Time) error {
+		return fmt.Errorf("500 InternalServerError")
+	}
+	d.blockedBy = func(err error) (string, bool) { return "", false }
+
+	err := d.ensure(context.Background())
+
+	var hold liberrors.ErrHoldResource
+	if errors.As(err, &hold) {
+		t.Fatal("an unrecognised error was reported as a hold")
+	}
+	if err == nil {
+		t.Fatal("want an error")
+	}
+}
+
 func TestEnsureWaitsOutATransitionRatherThanSchedulingDuringOne(t *testing.T) {
 	f := &fakeService{state: "ACTIVE", transition: 1}
 	if err := f.schedule().ensure(context.Background()); err != nil {
@@ -123,4 +204,23 @@ func TestScheduledLaterThanNecessary(t *testing.T) {
 			t.Errorf("%s: got %t, want %t", tc.name, got, tc.want)
 		}
 	}
+}
+
+// fractionAsMilliseconds reads the fractional digits of a timestamp the way the services
+// do: as a count of milliseconds, however many digits there are.
+func fractionAsMilliseconds(at time.Time) time.Duration {
+	s := at.UTC().Format(time.RFC3339Nano)
+	i := strings.IndexByte(s, '.')
+	if i < 0 {
+		return 0
+	}
+	j := i + 1
+	for j < len(s) && s[j] >= '0' && s[j] <= '9' {
+		j++
+	}
+	n, err := strconv.Atoi(s[i+1 : j])
+	if err != nil {
+		return 0
+	}
+	return time.Duration(n) * time.Millisecond
 }

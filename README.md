@@ -36,9 +36,10 @@ and `oracle/oke-node-pool` terraform modules create:
 
 * Networking: VCN, Subnet, Route Table (including a VCN's default route table),
   Internet Gateway, NAT Gateway, Service Gateway, Network Security Group,
-  Load Balancer (created out-of-band by in-cluster controllers - the OCI CCM for
-  Service type=LoadBalancer, the native ingress controller - so deleting the OKE
-  cluster orphans them)
+  Load Balancer, Network Load Balancer (both created out-of-band by in-cluster
+  controllers - the OCI CCM for Service type=LoadBalancer, the native ingress
+  controller, and a UDP Service such as wireguard's, which gets an NLB instead of a
+  classic LB - so deleting the OKE cluster orphans them)
 * DNS: Zone
 * Object Storage: Bucket (including all object versions, not just current ones)
 * Logging: Log Group, Log
