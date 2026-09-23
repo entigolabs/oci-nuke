@@ -40,7 +40,9 @@ and `oracle/oke-node-pool` terraform modules create:
   controllers - the OCI CCM for Service type=LoadBalancer, the native ingress
   controller, and a UDP Service such as wireguard's, which gets an NLB instead of a
   classic LB - so deleting the OKE cluster orphans them)
-* DNS: Zone
+* DNS: Zone, both public GLOBAL ones and the PRIVATE ones a DNS view holds (a zone the
+  DNS service marks protected, such as the `<label>.oraclevcn.com` a VCN with a DNS label
+  gets, is left alone - no API call deletes one, and it goes with its VCN)
 * Object Storage: Bucket (including all object versions, not just current ones)
 * Logging: Log Group, Log
 * Compute: Container Instance

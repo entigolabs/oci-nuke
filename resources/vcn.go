@@ -19,7 +19,12 @@ func init() {
 		Scope:    nuke.Compartment,
 		Resource: &Vcn{},
 		Lister:   &VcnLister{},
+		// A private DNS zone lives in a view, and the view a deployment's zones go into
+		// is the default view of this VCN's own resolver. The zone outlives the VCN
+		// either way - that is how they piled up - but deleting it while its view is
+		// still there is the path the DNS API is built for, so the VCN waits.
 		DependsOn: []string{
+			DnsZoneResource,
 			SubnetResource,
 			RouteTableResource,
 			InternetGatewayResource,
