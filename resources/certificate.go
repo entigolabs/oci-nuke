@@ -60,7 +60,9 @@ func (l *CertificateLister) List(ctx context.Context, o interface{}) ([]resource
 					continue
 				}
 			}
-			resources = append(resources, &Certificate{client: client, ID: c.Id, Name: c.Name})
+			resources = append(resources, &Certificate{
+				client: client, issuerID: c.IssuerCertificateAuthorityId, ID: c.Id, Name: c.Name,
+			})
 		}
 		if resp.OpcNextPage == nil {
 			break
@@ -72,8 +74,19 @@ func (l *CertificateLister) List(ctx context.Context, o interface{}) ([]resource
 
 type Certificate struct {
 	client certificatesmanagement.CertificatesManagementClient
-	ID     *string
-	Name   *string
+	// Unexported so that it stays out of Properties; Blocks needs it.
+	issuerID *string
+	ID       *string
+	Name     *string
+}
+
+// Blocks names the CA that issued the certificate: it cannot be scheduled for deletion while
+// the certificate exists, so a certificate kept by a filter keeps its CA as well.
+func (r *Certificate) Blocks() []resource.Ref {
+	if r.issuerID == nil {
+		return nil
+	}
+	return []resource.Ref{{Type: CertificateAuthorityResource, ID: *r.issuerID}}
 }
 
 // certificateMinRetention is OCI's mandatory minimum delay before a scheduled

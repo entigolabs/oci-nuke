@@ -76,6 +76,7 @@ func (l *KeyLister) List(ctx context.Context, o interface{}) ([]resource.Resourc
 					ID:        k.Id,
 					Name:      k.DisplayName,
 					VaultName: v.DisplayName,
+					vaultID:   v.Id,
 				})
 			}
 			if resp.OpcNextPage == nil {
@@ -92,6 +93,17 @@ type Key struct {
 	ID        *string
 	Name      *string
 	VaultName *string
+	// Unexported so that it stays out of Properties; Blocks needs it.
+	vaultID *string
+}
+
+// Blocks names the vault holding the key: a key deferred behind its CA holds back its own
+// vault, not every vault in the compartment.
+func (r *Key) Blocks() []resource.Ref {
+	if r.vaultID == nil {
+		return nil
+	}
+	return []resource.Ref{{Type: VaultResource, ID: *r.vaultID}}
 }
 
 // keyMinRetention is the floor OCI puts on a scheduled key deletion: "the specified time

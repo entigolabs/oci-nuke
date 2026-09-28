@@ -8,3 +8,11 @@ func strPtrOrNil(s string) *string {
 	}
 	return &s
 }
+
+// strOr dereferences s, or returns fallback when the service left it out.
+func strOr(s *string, fallback string) string {
+	if s == nil {
+		return fallback
+	}
+	return *s
+}
