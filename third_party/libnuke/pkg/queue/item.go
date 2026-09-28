@@ -36,6 +36,8 @@ func (s ItemState) String() string {
 		return "filtered"
 	case ItemStateFinished:
 		return "finished"
+	case ItemStateDeferred:
+		return "deferred"
 	}
 	return "unknown"
 }
@@ -50,6 +52,10 @@ const (
 	ItemStateFailed
 	ItemStateFiltered
 	ItemStateFinished
+	// entigo patch: terminal for this run without being a failure - see ErrDeferResource.
+	// Appended rather than placed by meaning, because log/formatter.go colours by the numeric
+	// state code and every earlier value would shift.
+	ItemStateDeferred
 )
 
 type IItem interface {
@@ -188,6 +194,8 @@ func (i *Item) Print() {
 		itemLog.Infof("filtered: %s", i.Reason)
 	case ItemStateFinished:
 		itemLog.Info("removed")
+	case ItemStateDeferred:
+		itemLog.Infof("deferred: %s", i.Reason)
 	}
 }
 

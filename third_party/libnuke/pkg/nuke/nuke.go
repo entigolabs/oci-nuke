@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -217,11 +218,13 @@ func (n *Nuke) Run(ctx context.Context) error {
 	// promoting the item to removal, so letting the run proceed is safe.
 	if n.Queue.Count(queue.ItemStateNew, queue.ItemStateNewDependency) == 0 {
 		printLog.Info("No resource to delete.")
+		n.printDeferred()
 		return nil
 	}
 
 	if !n.Parameters.NoDryRun {
 		printLog.Info("The above resources would be deleted with the supplied configuration. Provide --no-dry-run to actually destroy resources.")
+		n.printDeferred()
 		return nil
 	}
 
@@ -233,16 +236,36 @@ func (n *Nuke) Run(ctx context.Context) error {
 		return err
 	}
 
+	n.printDeferred()
+	deferred := n.Queue.Count(queue.ItemStateDeferred)
+
 	printLog.
 		WithFields(logrus.Fields{
 			"failed":   n.Queue.Count(queue.ItemStateFailed),
 			"skipped":  n.Queue.Count(queue.ItemStateFiltered),
 			"finished": n.Queue.Count(queue.ItemStateFinished),
+			"deferred": deferred,
 		}).
-		Infof("Nuke complete: %d failed, %d skipped, %d finished.\n",
-			n.Queue.Count(queue.ItemStateFailed), n.Queue.Count(queue.ItemStateFiltered), n.Queue.Count(queue.ItemStateFinished))
+		Infof("Nuke complete: %d failed, %d skipped, %d finished, %d deferred.\n",
+			n.Queue.Count(queue.ItemStateFailed), n.Queue.Count(queue.ItemStateFiltered),
+			n.Queue.Count(queue.ItemStateFinished), deferred)
 
 	return nil
+}
+
+// entigo patch: a successful run can leave deferred items standing, so name each one with
+// its reason rather than letting a green run read as a clean sweep.
+func (n *Nuke) printDeferred() {
+	deferred := n.Queue.Count(queue.ItemStateDeferred)
+	if deferred == 0 {
+		return
+	}
+	n.log.WithField("_handler", "println").Warnf("%d resource(s) deferred to a later run:", deferred)
+	for _, item := range n.Queue.GetItems() {
+		if item.GetState() == queue.ItemStateDeferred {
+			item.Print()
+		}
+	}
 }
 
 // handleFailure is used to handle the failure state of resources. It will determine if there have been too many
@@ -595,6 +618,7 @@ func (n *Nuke) HandleQueue(ctx context.Context) {
 	countFailed := n.Queue.Count(queue.ItemStateFailed)
 	countSkipped := n.Queue.Count(queue.ItemStateFiltered)
 	countFinished := n.Queue.Count(queue.ItemStateFinished)
+	countDeferred := n.Queue.Count(queue.ItemStateDeferred) // entigo patch
 
 	printLog := n.log.WithField("_handler", "println")
 	printLog.
@@ -603,9 +627,10 @@ func (n *Nuke) HandleQueue(ctx context.Context) {
 			"failed":   countFailed,
 			"skipped":  countSkipped,
 			"finished": countFinished,
+			"deferred": countDeferred,
 		}).
-		Infof("Removal requested: %d waiting, %d failed, %d skipped, %d finished\n\n",
-			countWaiting, countFailed, countSkipped, countFinished)
+		Infof("Removal requested: %d waiting, %d failed, %d skipped, %d finished, %d deferred\n\n",
+			countWaiting, countFailed, countSkipped, countFinished, countDeferred)
 }
 
 // HandleRemove is used to handle the removal of a resource. It will remove the resource and set the state of the
@@ -617,6 +642,15 @@ func (n *Nuke) HandleRemove(ctx context.Context, item *queue.Item) {
 		if errors.As(err, &resErr) {
 			item.State = queue.ItemStateHold
 			item.Reason = resErr.Error()
+			return
+		}
+
+		// entigo patch: see ErrDeferResource. No handler acts on ItemStateDeferred, so the
+		// item is not tried again in this run.
+		var deferErr liberrors.ErrDeferResource
+		if errors.As(err, &deferErr) {
+			item.State = queue.ItemStateDeferred
+			item.Reason = deferErr.Error()
 			return
 		}
 
@@ -634,12 +668,25 @@ func (n *Nuke) HandleRemove(ctx context.Context, item *queue.Item) {
 func (n *Nuke) HandleWaitDependency(ctx context.Context, item *queue.Item) {
 	reg := registry.GetRegistration(item.Type)
 	depCount := 0
+	deferredDeps := []string{}
 	for _, dep := range reg.DependsOn {
 		cnt := n.Queue.CountByType(dep,
 			queue.ItemStateNew, queue.ItemStateNewDependency,
 			queue.ItemStatePending, queue.ItemStatePendingDependency,
 			queue.ItemStateWaiting, queue.ItemStateHold)
 		depCount += cnt
+		if n.Queue.CountByType(dep, queue.ItemStateDeferred) > 0 {
+			deferredDeps = append(deferredDeps, dep)
+		}
+	}
+
+	// entigo patch: a deferred dependency is still standing, so the item cannot go either,
+	// and it cannot go for the same reason - a later run will take them in order. Without
+	// this the item would sit in pending-dependency until max wait retries fails the run.
+	if depCount == 0 && len(deferredDeps) > 0 {
+		item.State = queue.ItemStateDeferred
+		item.Reason = fmt.Sprintf("blocked by deferred %s", strings.Join(deferredDeps, ", "))
+		return
 	}
 
 	if depCount == 0 {
