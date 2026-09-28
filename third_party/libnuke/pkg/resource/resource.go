@@ -60,3 +60,39 @@ type QueueItemHook interface {
 	Resource
 	BeforeEnqueue(interface{})
 }
+
+// entigo patch: Deferrer lets a resource say, before anything is removed, that it cannot go
+// in this run because an object blocking it is already scheduled for deletion and will only
+// be gone after this run ends. Scan evaluates it for every resource the filters leave in, so
+// a dry run shows the deferral and a real run never attempts the resource. A resource that
+// cannot tell at scan time can still return errors.ErrDeferResource from Remove.
+type Deferrer interface {
+	Resource
+	Defer(context.Context) (reason string, deferred bool, err error)
+}
+
+// entigo patch: DeletionScheduler marks a resource whose removal only schedules its deletion
+// for a later date, so a dry run can say "would schedule deletion" instead of "would remove"
+// and the scan summary can count such resources apart.
+type DeletionScheduler interface {
+	Resource
+	SchedulesDeletion() bool
+}
+
+// entigo patch: Ref names one resource by its registered type and the value of its "ID"
+// property.
+type Ref struct {
+	Type string
+	ID   string
+}
+
+// entigo patch: Blocker names the resources that cannot be removed while this one stands.
+// DependsOn only relates types, so without it a deferred resource holds back every resource
+// of every type that depends on its type; with it, only the resources it names. The names
+// also let a filtered resource keep what it blocks, which DependsOn alone cannot do safely.
+// It refines DependsOn rather than replacing it: the ordering within a run stays per type,
+// and only resources of a type that depends on this one's type are matched.
+type Blocker interface {
+	Resource
+	Blocks() []Ref
+}
