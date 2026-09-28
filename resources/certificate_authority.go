@@ -3,6 +3,7 @@ package resources
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -36,11 +37,10 @@ func init() {
 		//   for deletion because subordinate CAs or certificates exist.
 		//
 		// So a compartment holding certificates cannot have its CA removed in the same
-		// run, whatever order this dependency puts them in. The CA fails, the run exits
-		// non-zero, and a second nuke the next day - once the certificates are actually
-		// deleted - takes it. That failure is deliberate: a CA left standing is a billed
-		// resource, and a run that exits 0 with one still there reads as a clean sweep.
-		// Nothing is left in a broken state either way.
+		// run, whatever order this dependency puts them in. The scan defers the CA - see
+		// Defer - and a nuke the next day, once the certificates are actually deleted,
+		// takes it. The run still succeeds, and names the deferred CA at the end, so a CA
+		// left standing is reported rather than hidden.
 		DependsOn: []string{CertificateResource},
 		Resource:  &CertificateAuthority{},
 		Lister:    &CertificateAuthorityLister{},
@@ -77,7 +77,10 @@ func (l *CertificateAuthorityLister) List(ctx context.Context, o interface{}) ([
 					continue
 				}
 			}
-			resources = append(resources, &CertificateAuthority{client: client, ID: ca.Id, Name: ca.Name})
+			resources = append(resources, &CertificateAuthority{
+				client: client, compartmentID: opts.CompartmentID, kmsKeyID: ca.KmsKeyId,
+				ID: ca.Id, Name: ca.Name,
+			})
 		}
 		if resp.OpcNextPage == nil {
 			break
@@ -89,8 +92,21 @@ func (l *CertificateAuthorityLister) List(ctx context.Context, o interface{}) ([
 
 type CertificateAuthority struct {
 	client certificatesmanagement.CertificatesManagementClient
-	ID     *string
-	Name   *string
+	// Unexported so that they stay out of Properties; the issuer filters need the
+	// compartment, and Blocks the signing key.
+	compartmentID string
+	kmsKeyID      *string
+	ID            *string
+	Name          *string
+}
+
+// Blocks names the CA's signing key: a deferred CA holds back its own key, not every key in
+// the compartment.
+func (r *CertificateAuthority) Blocks() []resource.Ref {
+	if r.kmsKeyID == nil {
+		return nil
+	}
+	return []resource.Ref{{Type: KeyResource, ID: *r.kmsKeyID}}
 }
 
 // A CA is NOT the 24 hours a certificate gets - it is 7 days, the same as a vault or key.
@@ -131,6 +147,80 @@ func (r *CertificateAuthority) Remove(ctx context.Context) error {
 	}.ensure(ctx)
 }
 
+// A certificate stops blocking its issuer only some time after it is DELETED, not when it
+// is scheduled: a certificate in PENDING_DELETION, or deleted less than this long ago,
+// still earns the 409 below.
+const certificateBlocksIssuerAfterDeletion = 24 * time.Hour
+
+// Defer checks, before anything is removed, what certificateAuthorityBlockedByCertificates
+// would otherwise learn from a refused schedule: whether certificates or subordinate CAs
+// the CA issued still exist. Any that are still ACTIVE are scheduled in this same run, by
+// DependsOn, and then block the CA just as long. So the CA is deferred either way, and the
+// reason names what blocks it and in what state. A certificate a filter keeps is never
+// scheduled at all; the scan sees that through Certificate.Blocks and keeps the CA instead.
+//
+// Only the CA's own compartment is searched: the service rejects an issuer filter without
+// one. A blocker elsewhere is still caught when the schedule is refused.
+func (r *CertificateAuthority) Defer(ctx context.Context) (string, bool, error) {
+	var blockers []string
+
+	page := ""
+	for {
+		resp, err := r.client.ListCertificates(ctx, certificatesmanagement.ListCertificatesRequest{
+			CompartmentId:                &r.compartmentID,
+			IssuerCertificateAuthorityId: r.ID,
+			Page:                         strPtrOrNil(page),
+		})
+		if err != nil {
+			return "", false, err
+		}
+		for _, c := range resp.Items {
+			if certificateBlocksIssuer(c.LifecycleState, c.TimeOfDeletion, time.Now()) {
+				blockers = append(blockers, fmt.Sprintf("certificate %s (%s)", strOr(c.Name, "?"), c.LifecycleState))
+			}
+		}
+		if resp.OpcNextPage == nil {
+			break
+		}
+		page = *resp.OpcNextPage
+	}
+
+	page = ""
+	for {
+		resp, err := r.client.ListCertificateAuthorities(ctx, certificatesmanagement.ListCertificateAuthoritiesRequest{
+			CompartmentId:                &r.compartmentID,
+			IssuerCertificateAuthorityId: r.ID,
+			Page:                         strPtrOrNil(page),
+		})
+		if err != nil {
+			return "", false, err
+		}
+		for _, ca := range resp.Items {
+			if ca.LifecycleState != certificatesmanagement.CertificateAuthorityLifecycleStateDeleted {
+				blockers = append(blockers, fmt.Sprintf("subordinate CA %s (%s)", strOr(ca.Name, "?"), ca.LifecycleState))
+			}
+		}
+		if resp.OpcNextPage == nil {
+			break
+		}
+		page = *resp.OpcNextPage
+	}
+
+	if len(blockers) == 0 {
+		return "", false, nil
+	}
+	return "blocked until deleted: " + strings.Join(blockers, ", "), true, nil
+}
+
+// certificateBlocksIssuer reports whether a certificate in this state still prevents its
+// issuing CA from being scheduled for deletion.
+func certificateBlocksIssuer(state certificatesmanagement.CertificateLifecycleStateEnum, deleted *common.SDKTime, now time.Time) bool {
+	if state != certificatesmanagement.CertificateLifecycleStateDeleted {
+		return true
+	}
+	return deleted == nil || now.Before(deleted.Add(certificateBlocksIssuerAfterDeletion))
+}
+
 func (r *CertificateAuthority) Properties() types.Properties {
 	return types.NewPropertiesFromStruct(r)
 }
@@ -147,8 +237,10 @@ func (r *CertificateAuthority) String() string {
 // retention. So a CA and its certificates can never go in one run: the certificates are
 // scheduled, and the CA follows once their dates pass.
 //
-// That is the expected order of events rather than something to fix, so it is reported as a
-// hold. The service states it plainly enough to match on:
+// That is the expected order of events rather than something to fix, so the CA is deferred
+// to a later run. Defer normally finds this at scan time; this is the fallback for a
+// blocker it could not see. The service states it plainly enough to match on - and the 409's code is
+// only the generic "Conflict", so the message is the one thing that tells this refusal apart:
 //
 //	cannot be scheduled for deletion because subordinate CAs or certificates exist
 func certificateAuthorityBlockedByCertificates(err error) (string, bool) {

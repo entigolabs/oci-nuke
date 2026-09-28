@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -217,11 +218,13 @@ func (n *Nuke) Run(ctx context.Context) error {
 	// promoting the item to removal, so letting the run proceed is safe.
 	if n.Queue.Count(queue.ItemStateNew, queue.ItemStateNewDependency) == 0 {
 		printLog.Info("No resource to delete.")
+		n.printDeferred()
 		return nil
 	}
 
 	if !n.Parameters.NoDryRun {
 		printLog.Info("The above resources would be deleted with the supplied configuration. Provide --no-dry-run to actually destroy resources.")
+		n.printDeferred()
 		return nil
 	}
 
@@ -233,16 +236,36 @@ func (n *Nuke) Run(ctx context.Context) error {
 		return err
 	}
 
+	n.printDeferred()
+	deferred := n.Queue.Count(queue.ItemStateDeferred)
+
 	printLog.
 		WithFields(logrus.Fields{
 			"failed":   n.Queue.Count(queue.ItemStateFailed),
 			"skipped":  n.Queue.Count(queue.ItemStateFiltered),
 			"finished": n.Queue.Count(queue.ItemStateFinished),
+			"deferred": deferred,
 		}).
-		Infof("Nuke complete: %d failed, %d skipped, %d finished.\n",
-			n.Queue.Count(queue.ItemStateFailed), n.Queue.Count(queue.ItemStateFiltered), n.Queue.Count(queue.ItemStateFinished))
+		Infof("Nuke complete: %d failed, %d skipped, %d finished, %d deferred.\n",
+			n.Queue.Count(queue.ItemStateFailed), n.Queue.Count(queue.ItemStateFiltered),
+			n.Queue.Count(queue.ItemStateFinished), deferred)
 
 	return nil
+}
+
+// entigo patch: a successful run can leave deferred items standing, so name each one with
+// its reason rather than letting a green run read as a clean sweep.
+func (n *Nuke) printDeferred() {
+	deferred := n.Queue.Count(queue.ItemStateDeferred)
+	if deferred == 0 {
+		return
+	}
+	n.log.WithField("_handler", "println").Warnf("%d resource(s) deferred to a later run:", deferred)
+	for _, item := range n.Queue.GetItems() {
+		if item.GetState() == queue.ItemStateDeferred {
+			item.Print()
+		}
+	}
 }
 
 // handleFailure is used to handle the failure state of resources. It will determine if there have been too many
@@ -411,15 +434,112 @@ func (n *Nuke) runScanner(ctx context.Context, resourceScanner *scanner.Scanner,
 			return err
 		}
 
-		// If quiet and filtered, skip printing to screen
-		if n.Parameters.Quiet && item.State == queue.ItemStateFiltered {
-			continue
-		}
-
-		item.Print()
+		n.checkDefer(ctx, item)
 	}
 
 	return nil
+}
+
+// entigo patch: checkDefer asks a resource the filters left in whether it has to wait for a
+// later run - see resource.Deferrer. A failed check is not a failed scan: the item stays as
+// it was, and a resource that is in fact blocked can still defer itself from Remove.
+func (n *Nuke) checkDefer(ctx context.Context, item *queue.Item) {
+	if item.State != queue.ItemStateNew && item.State != queue.ItemStateNewDependency {
+		return
+	}
+	d, ok := item.Resource.(resource.Deferrer)
+	if !ok {
+		return
+	}
+	reason, deferred, err := d.Defer(ctx)
+	if err != nil {
+		n.log.WithField("handler", "checkDefer").WithField("type", item.Type).
+			Warnf("could not check whether %s must be deferred, planning it for removal: %v", item.Type, err)
+		return
+	}
+	if deferred {
+		item.State = queue.ItemStateDeferred
+		item.Reason = reason
+	}
+}
+
+// entigo patch: planDependents carries two states along the links between resources,
+// repeating until nothing changes so that each follows a whole chain:
+//
+//   - kept: an item blocked by a filtered item is filtered too. The filtered item stays, so
+//     the item it blocks cannot go in this run or any later one while the filter stands.
+//     This only follows links a resource names itself (resource.Blocker): a filtered item
+//     without them keeps nothing, as before. It overrides a deferral, which would otherwise
+//     promise a later run that can never come.
+//   - deferred: an item blocked by a deferred item is deferred too. The run would reach the
+//     same result in HandleWaitDependency; doing it here puts it in the plan. Like DependsOn
+//     itself, this needs WaitOnDependencies.
+func (n *Nuke) planDependents(itemQueue *queue.Queue) {
+	for changed := true; changed; {
+		changed = false
+		for _, item := range itemQueue.GetItems() {
+			switch item.State {
+			case queue.ItemStateNew, queue.ItemStateNewDependency, queue.ItemStateDeferred:
+			default:
+				continue
+			}
+			if kept := blockersIn(itemQueue, item, queue.ItemStateFiltered, false); len(kept) > 0 {
+				item.State = queue.ItemStateFiltered
+				item.Reason = "blocked by filtered " + strings.Join(kept, ", ")
+				changed = true
+				continue
+			}
+			if !n.Parameters.WaitOnDependencies || item.State != queue.ItemStateNewDependency {
+				continue
+			}
+			if deferred := blockersIn(itemQueue, item, queue.ItemStateDeferred, true); len(deferred) > 0 {
+				item.State = queue.ItemStateDeferred
+				item.Reason = "blocked by deferred " + strings.Join(deferred, ", ")
+				changed = true
+			}
+		}
+	}
+}
+
+// entigo patch: blockersIn names the items in state that block item. A blocker is an item
+// of a type item depends on that names item among the resources it blocks (resource.Blocker).
+// With byType, an item that names nothing blocks every item of the depending types, which
+// is all DependsOn itself can express.
+func blockersIn(itemQueue *queue.Queue, item *queue.Item, state queue.ItemState, byType bool) []string {
+	var blockers []string
+	for _, dep := range registry.GetRegistration(item.Type).DependsOn {
+		for _, d := range itemQueue.GetItems() {
+			if d.Type != dep || d.State != state {
+				continue
+			}
+			if b, ok := d.Resource.(resource.Blocker); ok {
+				if !refersTo(b.Blocks(), item) {
+					continue
+				}
+			} else if !byType {
+				continue
+			}
+			name := d.Type
+			if s, ok := d.Resource.(resource.LegacyStringer); ok {
+				name += " " + s.String()
+			}
+			blockers = append(blockers, name)
+		}
+	}
+	return blockers
+}
+
+// entigo patch: refersTo reports whether any of refs names item.
+func refersTo(refs []resource.Ref, item *queue.Item) bool {
+	for _, ref := range refs {
+		if ref.Type != item.Type {
+			continue
+		}
+		if id, err := item.GetProperty("ID"); err == nil && id != "" && id == ref.ID {
+			return true
+		}
+	}
+	return false
 }
 
 // Scan is used to scan for resources. It will run the scanners that were registered with the library by the invoking
@@ -437,16 +557,46 @@ func (n *Nuke) Scan(ctx context.Context) error {
 		}
 	}
 
+	// entigo patch: items are printed once the plan is complete rather than as each is
+	// scanned, because planDependents can still change an item scanned earlier.
+	n.planDependents(itemQueue)
+	for _, item := range itemQueue.GetItems() {
+		// If quiet and filtered, skip printing to screen
+		if n.Parameters.Quiet && item.State == queue.ItemStateFiltered {
+			continue
+		}
+		item.Print()
+	}
+
+	// entigo patch: the categories are disjoint and add up to the scanned total. Nukeable
+	// items are removed in this run, schedulable ones have their deletion scheduled for a
+	// later date, and deferred ones are left for a later run.
+	nukeable, schedulable := 0, 0
+	for _, item := range itemQueue.GetItems() {
+		if item.State != queue.ItemStateNew && item.State != queue.ItemStateNewDependency {
+			continue
+		}
+		if item.SchedulesDeletion() {
+			schedulable++
+		} else {
+			nukeable++
+		}
+	}
+	deferred := itemQueue.Count(queue.ItemStateDeferred)
+	filtered := itemQueue.Count(queue.ItemStateFiltered)
+
 	printLog := n.log.WithField("_handler", "println")
 
 	printLog.
 		WithFields(logrus.Fields{
-			"total":    itemQueue.Total(),
-			"nukeable": itemQueue.Count(queue.ItemStateNew, queue.ItemStateNewDependency),
-			"filtered": itemQueue.Count(queue.ItemStateFiltered),
+			"scanned":     itemQueue.Total(),
+			"nukeable":    nukeable,
+			"schedulable": schedulable,
+			"deferred":    deferred,
+			"filtered":    filtered,
 		}).
-		Infof("Scan complete: %d total, %d nukeable, %d filtered.\n",
-			itemQueue.Total(), itemQueue.Count(queue.ItemStateNew, queue.ItemStateNewDependency), itemQueue.Count(queue.ItemStateFiltered))
+		Infof("Scan complete: %d scanned, %d nukeable, %d schedulable, %d deferred, %d filtered.\n",
+			itemQueue.Total(), nukeable, schedulable, deferred, filtered)
 
 	n.Queue = itemQueue
 
@@ -595,6 +745,7 @@ func (n *Nuke) HandleQueue(ctx context.Context) {
 	countFailed := n.Queue.Count(queue.ItemStateFailed)
 	countSkipped := n.Queue.Count(queue.ItemStateFiltered)
 	countFinished := n.Queue.Count(queue.ItemStateFinished)
+	countDeferred := n.Queue.Count(queue.ItemStateDeferred) // entigo patch
 
 	printLog := n.log.WithField("_handler", "println")
 	printLog.
@@ -603,9 +754,10 @@ func (n *Nuke) HandleQueue(ctx context.Context) {
 			"failed":   countFailed,
 			"skipped":  countSkipped,
 			"finished": countFinished,
+			"deferred": countDeferred,
 		}).
-		Infof("Removal requested: %d waiting, %d failed, %d skipped, %d finished\n\n",
-			countWaiting, countFailed, countSkipped, countFinished)
+		Infof("Removal requested: %d waiting, %d failed, %d skipped, %d finished, %d deferred\n\n",
+			countWaiting, countFailed, countSkipped, countFinished, countDeferred)
 }
 
 // HandleRemove is used to handle the removal of a resource. It will remove the resource and set the state of the
@@ -617,6 +769,15 @@ func (n *Nuke) HandleRemove(ctx context.Context, item *queue.Item) {
 		if errors.As(err, &resErr) {
 			item.State = queue.ItemStateHold
 			item.Reason = resErr.Error()
+			return
+		}
+
+		// entigo patch: see ErrDeferResource. No handler acts on ItemStateDeferred, so the
+		// item is not tried again in this run.
+		var deferErr liberrors.ErrDeferResource
+		if errors.As(err, &deferErr) {
+			item.State = queue.ItemStateDeferred
+			item.Reason = deferErr.Error()
 			return
 		}
 
@@ -640,6 +801,18 @@ func (n *Nuke) HandleWaitDependency(ctx context.Context, item *queue.Item) {
 			queue.ItemStatePending, queue.ItemStatePendingDependency,
 			queue.ItemStateWaiting, queue.ItemStateHold)
 		depCount += cnt
+	}
+
+	// entigo patch: a deferred dependency that blocks this item is still standing, so the
+	// item cannot go either, and it cannot go for the same reason - a later run will take
+	// them in order. Without this the item would sit in pending-dependency until max wait
+	// retries fails the run.
+	if depCount == 0 {
+		if blockers := blockersIn(n.Queue, item, queue.ItemStateDeferred, true); len(blockers) > 0 {
+			item.State = queue.ItemStateDeferred
+			item.Reason = "blocked by deferred " + strings.Join(blockers, ", ")
+			return
+		}
 	}
 
 	if depCount == 0 {

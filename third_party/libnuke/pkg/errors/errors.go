@@ -27,6 +27,16 @@ func (err ErrHoldResource) Error() string {
 	return string(err)
 }
 
+// entigo patch: ErrDeferResource marks a resource that cannot proceed in this run at all,
+// only in a later one. Unlike ErrHoldResource, which is retried within the run, the item is
+// left in ItemStateDeferred and neither retried nor counted as failed, so a run that leaves
+// only deferred items behind still succeeds.
+type ErrDeferResource string
+
+func (err ErrDeferResource) Error() string {
+	return string(err)
+}
+
 type ErrUnknownPreset string
 
 func (err ErrUnknownPreset) Error() string {

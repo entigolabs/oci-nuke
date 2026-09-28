@@ -76,7 +76,7 @@ func (f *CustomFormatter) Format(entry *logrus.Entry) ([]byte, error) { //nolint
 		msgColor = ReasonWaitPending
 	case 6:
 		msgColor = ReasonError
-	case 7:
+	case 7, 9: // entigo patch: 9 is queue.ItemStateDeferred, left alone rather than failed
 		msgColor = ReasonSkip
 	}
 

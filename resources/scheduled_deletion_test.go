@@ -131,10 +131,10 @@ func TestEnsureSendsADateTheServiceCanRoundTrip(t *testing.T) {
 	}
 }
 
-// A service refusing because dependents still exist is not a failure: they are themselves
-// already scheduled, so the block clears without anyone doing anything. ensure reports it as
-// a hold, which libnuke keeps out of the failure count.
-func TestEnsureHoldsRatherThanFailsWhenDependentsStillExist(t *testing.T) {
+// A resource blocked by an object already scheduled for deletion is not a failure: the
+// block clears on that object's date without anyone doing anything. ensure reports it as
+// deferred, which libnuke neither retries in the run nor counts as a failure.
+func TestEnsureDefersRatherThanFailsWhenBlockedByAScheduledObject(t *testing.T) {
 	f := &fakeService{state: "ACTIVE"}
 	d := f.schedule()
 	d.schedule = func(ctx context.Context, at time.Time) error {
@@ -149,12 +149,12 @@ func TestEnsureHoldsRatherThanFailsWhenDependentsStillExist(t *testing.T) {
 
 	err := d.ensure(context.Background())
 
-	var hold liberrors.ErrHoldResource
-	if !errors.As(err, &hold) {
-		t.Fatalf("got %T (%v), want ErrHoldResource so libnuke reports it as hold", err, err)
+	var deferred liberrors.ErrDeferResource
+	if !errors.As(err, &deferred) {
+		t.Fatalf("got %T (%v), want ErrDeferResource so libnuke leaves it deferred", err, err)
 	}
-	if !strings.Contains(hold.Error(), "retention") {
-		t.Fatalf("hold reason %q does not say why", hold.Error())
+	if !strings.Contains(deferred.Error(), "retention") {
+		t.Fatalf("deferral reason %q does not say why", deferred.Error())
 	}
 }
 
@@ -169,9 +169,9 @@ func TestEnsureStillFailsOnAnUnrecognisedError(t *testing.T) {
 
 	err := d.ensure(context.Background())
 
-	var hold liberrors.ErrHoldResource
-	if errors.As(err, &hold) {
-		t.Fatal("an unrecognised error was reported as a hold")
+	var deferred liberrors.ErrDeferResource
+	if errors.As(err, &deferred) {
+		t.Fatal("an unrecognised error was reported as deferred")
 	}
 	if err == nil {
 		t.Fatal("want an error")

@@ -82,12 +82,12 @@ type deletionSchedule struct {
 	schedule     func(ctx context.Context, at time.Time) error
 	cancel       func(ctx context.Context) error
 
-	// blockedBy reports whether an error from schedule means the service is refusing
-	// because dependents of this resource still exist, and says so in a form fit to show
-	// a human. That is not a failure: those dependents are themselves already scheduled,
-	// so the block clears on its own and the answer is to run again later, not to fix
-	// anything. ensure turns it into liberrors.ErrHoldResource, which libnuke reports as
-	// `hold` with the reason rather than counting it among the failures.
+	// blockedBy reports whether an error from schedule means the resource is blocked by an
+	// object already scheduled for deletion, and says so in a form fit to show a human.
+	// That is not a failure: the blocking object goes on its own date, and a later run
+	// then takes this one, so there is nothing to fix. ensure turns it into
+	// liberrors.ErrDeferResource, which leaves the item deferred for the rest of the run -
+	// attempted once, not retried, listed at the end, and not failing the run.
 	//
 	// Only the recognition is per-service - each words its refusal differently - so this
 	// closure sits beside read/schedule/cancel for the same reason they do. Nil where a
@@ -122,7 +122,7 @@ func (d deletionSchedule) ensure(ctx context.Context) error {
 			if err := d.schedule(ctx, time.Now().Add(d.minRetention).UTC().Truncate(deletionPrecision)); err != nil {
 				if d.blockedBy != nil {
 					if reason, ok := d.blockedBy(err); ok {
-						return liberrors.ErrHoldResource(reason)
+						return liberrors.ErrDeferResource(reason)
 					}
 				}
 				return err
@@ -182,3 +182,11 @@ func formatDeletionTime(scheduled *common.SDKTime) string {
 	}
 	return scheduled.UTC().Format(time.RFC3339)
 }
+
+// SchedulesDeletion tells libnuke that removing these resources only schedules their
+// deletion, so a dry run says "would schedule deletion" and the scan counts them as
+// schedulable rather than nukeable.
+func (r *Certificate) SchedulesDeletion() bool          { return true }
+func (r *CertificateAuthority) SchedulesDeletion() bool { return true }
+func (r *Key) SchedulesDeletion() bool                  { return true }
+func (r *Vault) SchedulesDeletion() bool                { return true }

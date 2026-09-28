@@ -36,6 +36,8 @@ func (s ItemState) String() string {
 		return "filtered"
 	case ItemStateFinished:
 		return "finished"
+	case ItemStateDeferred:
+		return "deferred"
 	}
 	return "unknown"
 }
@@ -50,6 +52,10 @@ const (
 	ItemStateFailed
 	ItemStateFiltered
 	ItemStateFinished
+	// entigo patch: terminal for this run without being a failure - see ErrDeferResource.
+	// Appended rather than placed by meaning, because log/formatter.go colours by the numeric
+	// state code and every earlier value would shift.
+	ItemStateDeferred
 )
 
 type IItem interface {
@@ -171,9 +177,9 @@ func (i *Item) Print() {
 
 	switch i.State {
 	case ItemStateNew:
-		itemLog.Info("would remove")
+		itemLog.Info(i.wouldVerb())
 	case ItemStateNewDependency:
-		itemLog.Info("would remove after dependencies")
+		itemLog.Info(i.wouldVerb() + " after dependencies")
 	case ItemStateHold:
 		itemLog.Info("waiting for parent removal")
 	case ItemStatePending:
@@ -188,6 +194,8 @@ func (i *Item) Print() {
 		itemLog.Infof("filtered: %s", i.Reason)
 	case ItemStateFinished:
 		itemLog.Info("removed")
+	case ItemStateDeferred:
+		itemLog.Infof("deferred: %s", i.Reason)
 	}
 }
 
@@ -209,4 +217,20 @@ func sorted(m map[string]string) logrus.Fields {
 		out[fmt.Sprintf("prop:%s", keys[k])] = m[keys[k]]
 	}
 	return out
+}
+
+// entigo patch: a resource whose removal only schedules its deletion is shown as such, so a
+// dry run does not promise a removal the run will not make.
+func (i *Item) wouldVerb() string {
+	if i.SchedulesDeletion() {
+		return "would schedule deletion"
+	}
+	return "would remove"
+}
+
+// SchedulesDeletion reports whether removing the Item's Resource only schedules its deletion.
+// entigo patch: see resource.DeletionScheduler.
+func (i *Item) SchedulesDeletion() bool {
+	s, ok := i.Resource.(resource.DeletionScheduler)
+	return ok && s.SchedulesDeletion()
 }
