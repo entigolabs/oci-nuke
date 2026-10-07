@@ -22,10 +22,11 @@ const OrphanedVnicResource = "OCIOrphanedVnic"
 // PrivateIpVnicDetach, the same call OCI's own pod-networking CNI uses for this.
 func init() {
 	registry.Register(&registry.Registration{
-		Name:     OrphanedVnicResource,
-		Scope:    nuke.Compartment,
-		Resource: &OrphanedVnic{},
-		Lister:   &OrphanedVnicLister{},
+		Name:      OrphanedVnicResource,
+		Scope:     nuke.Compartment,
+		Resource:  &OrphanedVnic{},
+		Lister:    &OrphanedVnicLister{},
+		DependsOn: []string{OkeNodePoolResource, OkeClusterResource, LoadBalancerResource, NetworkLoadBalancerResource},
 	})
 }
 
