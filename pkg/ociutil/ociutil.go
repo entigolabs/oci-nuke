@@ -1,7 +1,7 @@
 // Package ociutil resolves OCI credentials and account context, mirroring how the
 // entigo-infralib-agent and the oci CLI do it: resource principal when running inside
-// an OCI Container Instance, otherwise the SDK default chain (~/.oci/config, honoring
-// OCI_CONFIG_FILE, or config env vars).
+// an OCI Container Instance, then the file OCI_CONFIG_FILE names, otherwise the SDK default
+// chain (~/.oci/config, or config env vars).
 package ociutil
 
 import (
@@ -28,6 +28,9 @@ type OCI struct {
 func newConfigProvider() (ocicommon.ConfigurationProvider, error) {
 	if os.Getenv(auth.ResourcePrincipalVersionEnvVar) != "" {
 		return auth.ResourcePrincipalConfigurationProvider()
+	}
+	if path := os.Getenv("OCI_CONFIG_FILE"); path != "" {
+		return ocicommon.ConfigurationProviderFromFile(path, "")
 	}
 	return ocicommon.DefaultConfigProvider(), nil
 }
