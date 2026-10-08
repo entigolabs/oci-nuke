@@ -129,6 +129,9 @@ type OrphanedVnic struct {
 
 func (r *OrphanedVnic) Remove(ctx context.Context) error {
 	_, err := r.client.PrivateIpVnicDetach(ctx, core.PrivateIpVnicDetachRequest{PrivateIpId: r.PrivateIpID})
+	if isNotFound(err) {
+		return nil
+	}
 	return err
 }
 
