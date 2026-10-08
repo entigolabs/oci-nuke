@@ -30,6 +30,15 @@ func computeClient(o *nuke.ListerOpts) (core.ComputeClient, error) {
 	return client, nil
 }
 
+func blockstorageClient(o *nuke.ListerOpts) (core.BlockstorageClient, error) {
+	client, err := core.NewBlockstorageClientWithConfigurationProvider(o.Provider)
+	if err != nil {
+		return client, err
+	}
+	client.SetRegion(o.Region)
+	return client, nil
+}
+
 func virtualNetworkClient(o *nuke.ListerOpts) (core.VirtualNetworkClient, error) {
 	client, err := core.NewVirtualNetworkClientWithConfigurationProvider(o.Provider)
 	if err != nil {
