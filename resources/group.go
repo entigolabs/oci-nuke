@@ -2,7 +2,6 @@ package resources
 
 import (
 	"context"
-	"strings"
 
 	"github.com/ekristen/libnuke/pkg/registry"
 	"github.com/ekristen/libnuke/pkg/resource"
@@ -33,7 +32,7 @@ type GroupLister struct{}
 // grants to groups - so loki's user needs a group to sit in.
 func (l *GroupLister) List(ctx context.Context, o interface{}) ([]resource.Resource, error) {
 	opts := o.(*nuke.ListerOpts)
-	if opts.Prefix == "" {
+	if len(opts.Prefixes) == 0 {
 		return nil, nil
 	}
 	client, err := identityClient(opts)
@@ -55,7 +54,7 @@ func (l *GroupLister) List(ctx context.Context, o interface{}) ([]resource.Resou
 			if g.LifecycleState == identity.GroupLifecycleStateDeleted || g.LifecycleState == identity.GroupLifecycleStateDeleting {
 				continue
 			}
-			if g.Name == nil || !strings.HasPrefix(*g.Name, opts.Prefix+"-") {
+			if !opts.MatchesPrefix(g.Name, "%s-") {
 				continue
 			}
 			resources = append(resources, &Group{client: client, ID: g.Id, Name: g.Name})

@@ -2,7 +2,6 @@ package resources
 
 import (
 	"context"
-	"strings"
 
 	"github.com/ekristen/libnuke/pkg/registry"
 	"github.com/ekristen/libnuke/pkg/resource"
@@ -36,7 +35,7 @@ type UserLister struct{}
 // the caller's own user, never this one's.
 func (l *UserLister) List(ctx context.Context, o interface{}) ([]resource.Resource, error) {
 	opts := o.(*nuke.ListerOpts)
-	if opts.Prefix == "" {
+	if len(opts.Prefixes) == 0 {
 		return nil, nil
 	}
 	client, err := identityClient(opts)
@@ -58,7 +57,7 @@ func (l *UserLister) List(ctx context.Context, o interface{}) ([]resource.Resour
 			if u.LifecycleState == identity.UserLifecycleStateDeleted || u.LifecycleState == identity.UserLifecycleStateDeleting {
 				continue
 			}
-			if u.Name == nil || !strings.HasPrefix(*u.Name, opts.Prefix+"-") {
+			if !opts.MatchesPrefix(u.Name, "%s-") {
 				continue
 			}
 			resources = append(resources, &User{client: client, ID: u.Id, Name: u.Name})

@@ -29,7 +29,7 @@ func execute(ctx context.Context, cmd *cli.Command) error {
 
 	region := cmd.String("region")
 	compartmentID := cmd.String("compartment-id")
-	prefix := cmd.String("prefix")
+	prefixes := cmd.StringSlice("prefix")
 
 	oci, err := ociutil.New(ctx, region, compartmentID)
 	if err != nil {
@@ -47,7 +47,7 @@ func execute(ctx context.Context, cmd *cli.Command) error {
 		Includes:           cmd.StringSlice("include"),
 		Excludes:           cmd.StringSlice("exclude"),
 		WaitOnDependencies: true,
-		MaxWaitRetries:     20,
+		MaxWaitRetries:     240,
 	}
 
 	parsedConfig, err := libconfig.New(libconfig.Options{
@@ -82,7 +82,7 @@ func execute(ctx context.Context, cmd *cli.Command) error {
 		CompartmentID: oci.CompartmentID,
 		TenancyID:     oci.TenancyID,
 		UserID:        oci.UserID,
-		Prefix:        prefix,
+		Prefixes:      prefixes,
 	}
 
 	for _, scope := range []registry.Scope{nuke.Compartment, nuke.Tenancy} {
@@ -168,9 +168,9 @@ func init() {
 			Sources:  cli.EnvVars("OCI_REGION"),
 			Required: true,
 		},
-		&cli.StringFlag{
+		&cli.StringSliceFlag{
 			Name: "prefix",
-			Usage: "deployment prefix used to find and filter this deployment's own " +
+			Usage: "deployment prefix, repeatable, used to find and filter these deployments' own " +
 				"tenancy-wide resources (dynamic groups, policies, secret keys) out of a " +
 				"namespace shared with everyone else in the tenancy",
 			Sources:  cli.EnvVars("OCI_NUKE_PREFIX"),

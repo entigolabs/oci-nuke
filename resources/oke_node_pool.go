@@ -3,8 +3,8 @@ package resources
 import (
 	"context"
 	"fmt"
-	"time"
 
+	liberrors "github.com/ekristen/libnuke/pkg/errors"
 	"github.com/ekristen/libnuke/pkg/registry"
 	"github.com/ekristen/libnuke/pkg/resource"
 	"github.com/ekristen/libnuke/pkg/types"
@@ -65,35 +65,29 @@ type OkeNodePool struct {
 	Name   *string
 }
 
-// DeleteNodePool only accepts the request - the underlying compute instances take
-// several minutes to actually terminate and release their VNICs. Returning as soon as
-// the delete call is accepted (rather than once the pool is actually gone) makes libnuke
-// think the dependency is satisfied and move on to the subnet, which then 409s with
-// "references the VNIC ..." since the node's VNIC hasn't been released yet.
+// DeleteNodePool only accepts the request. HandleWait keeps the node pool waiting until it is
+// gone, so the subnets that depend on it are not removed while it still holds VNICs in them.
 func (r *OkeNodePool) Remove(ctx context.Context) error {
-	if _, err := r.client.DeleteNodePool(ctx, containerengine.DeleteNodePoolRequest{NodePoolId: r.ID}); err != nil {
-		return err
-	}
+	_, err := r.client.DeleteNodePool(ctx, containerengine.DeleteNodePoolRequest{
+		NodePoolId:                                r.ID,
+		OverrideEvictionGraceDuration:             common.String("PT0M"),
+		IsForceDeletionAfterOverrideGraceDuration: common.Bool(true),
+	})
+	return err
+}
 
-	deadline := time.Now().Add(10 * time.Minute)
-	for time.Now().Before(deadline) {
-		resp, err := r.client.GetNodePool(ctx, containerengine.GetNodePoolRequest{NodePoolId: r.ID})
-		if err != nil {
-			if svcErr, ok := common.IsServiceError(err); ok && svcErr.GetHTTPStatusCode() == 404 {
-				return nil
-			}
-			return err
-		}
-		if resp.LifecycleState == containerengine.NodePoolLifecycleStateDeleted {
+func (r *OkeNodePool) HandleWait(ctx context.Context) error {
+	resp, err := r.client.GetNodePool(ctx, containerengine.GetNodePoolRequest{NodePoolId: r.ID})
+	if err != nil {
+		if svcErr, ok := common.IsServiceError(err); ok && svcErr.GetHTTPStatusCode() == 404 {
 			return nil
 		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(10 * time.Second):
-		}
+		return err
 	}
-	return fmt.Errorf("node pool %s did not reach Deleted state within timeout", *r.ID)
+	if resp.LifecycleState == containerengine.NodePoolLifecycleStateDeleted {
+		return nil
+	}
+	return liberrors.ErrWaitResource(fmt.Sprintf("node pool is %s", resp.LifecycleState))
 }
 
 func (r *OkeNodePool) Properties() types.Properties {

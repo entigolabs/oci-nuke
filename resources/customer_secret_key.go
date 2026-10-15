@@ -2,7 +2,6 @@ package resources
 
 import (
 	"context"
-	"strings"
 
 	"github.com/ekristen/libnuke/pkg/registry"
 	"github.com/ekristen/libnuke/pkg/resource"
@@ -31,7 +30,7 @@ type CustomerSecretKeyLister struct{}
 // matching oracle/oracle.go's CreateServiceAccount / getBucketResources naming.
 func (l *CustomerSecretKeyLister) List(ctx context.Context, o interface{}) ([]resource.Resource, error) {
 	opts := o.(*nuke.ListerOpts)
-	if opts.Prefix == "" || opts.UserID == "" {
+	if len(opts.Prefixes) == 0 || opts.UserID == "" {
 		return nil, nil
 	}
 	client, err := identityClient(opts)
@@ -46,13 +45,12 @@ func (l *CustomerSecretKeyLister) List(ctx context.Context, o interface{}) ([]re
 		return nil, err
 	}
 
-	wantPrefix := "entigo-infralib-" + opts.Prefix
 	var resources []resource.Resource
 	for _, key := range resp.Items {
 		if key.LifecycleState == identity.CustomerSecretKeySummaryLifecycleStateDeleting {
 			continue
 		}
-		if key.DisplayName == nil || !strings.HasPrefix(*key.DisplayName, wantPrefix) {
+		if !opts.MatchesPrefix(key.DisplayName, "entigo-infralib-%s") {
 			continue
 		}
 		resources = append(resources, &CustomerSecretKey{client: client, UserID: opts.UserID, ID: key.Id, Name: key.DisplayName})
