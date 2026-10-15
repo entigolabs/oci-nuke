@@ -2,7 +2,6 @@ package resources
 
 import (
 	"context"
-	"strings"
 
 	"github.com/ekristen/libnuke/pkg/registry"
 	"github.com/ekristen/libnuke/pkg/resource"
@@ -44,13 +43,13 @@ func (l *PolicyLister) List(ctx context.Context, o interface{}) ([]resource.Reso
 
 	var resources []resource.Resource
 
-	if opts.Prefix != "" {
+	if len(opts.Prefixes) > 0 {
 		tenancyPolicies, err := listPolicies(ctx, client, opts.TenancyID)
 		if err != nil {
 			return nil, err
 		}
 		for _, p := range tenancyPolicies {
-			if p.Name == nil || !strings.HasPrefix(*p.Name, opts.Prefix+"-") {
+			if !opts.MatchesPrefix(p.Name, "%s-") {
 				continue
 			}
 			resources = append(resources, &Policy{client: client, ID: p.Id, Name: p.Name})

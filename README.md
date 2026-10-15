@@ -155,7 +155,8 @@ your environment; `config.yaml.example` is the tracked template.
 ./bin/oci-nuke run \
   --compartment-id ocid1.compartment.oc1..your-compartment-ocid \
   --region eu-frankfurt-1 \
-  --prefix myprefix
+  --prefix myprefix \
+  --prefix otherprefix
 ```
 
 Without `--no-dry-run`, this only lists what would be removed. Add `--no-dry-run` to
@@ -168,7 +169,7 @@ actually delete resources, and `--no-prompt` to skip the interactive confirmatio
 |--------------------|-----------------------------|-------------------------------------------------------------------------------------------------------------------------------|
 | `--compartment-id` | `OCI_NUKE_COMPARTMENT_ID`   | OCID of the compartment to nuke.                                                                                             |
 | `--region`         | `OCI_REGION`                | OCI region the compartment's resources live in.                                                                             |
-| `--prefix`         | `OCI_NUKE_PREFIX`           | Deployment prefix, used to find and filter this deployment's own tenancy-wide resources (dynamic groups, policies, secret keys) out of a namespace shared with everyone else in the tenancy. |
+| `--prefix`         | `OCI_NUKE_PREFIX`           | Deployment prefix, repeatable, used to find and filter these deployments' own tenancy-wide resources (dynamic groups, policies, secret keys) out of a namespace shared with everyone else in the tenancy. |
 | `--config`         | -                            | Path to the config file (default `config.yaml`).                                                                            |
 | `--no-dry-run`     | -                            | Actually remove resources. Without it, only a dry-run listing is printed.                                                   |
 | `--no-prompt`      | -                            | Skip the interactive confirmation prompt.                                                                                   |

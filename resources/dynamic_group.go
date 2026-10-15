@@ -2,7 +2,6 @@ package resources
 
 import (
 	"context"
-	"strings"
 
 	"github.com/ekristen/libnuke/pkg/registry"
 	"github.com/ekristen/libnuke/pkg/resource"
@@ -31,7 +30,7 @@ type DynamicGroupLister struct{}
 // these unconditionally.
 func (l *DynamicGroupLister) List(ctx context.Context, o interface{}) ([]resource.Resource, error) {
 	opts := o.(*nuke.ListerOpts)
-	if opts.Prefix == "" {
+	if len(opts.Prefixes) == 0 {
 		return nil, nil
 	}
 	client, err := identityClient(opts)
@@ -51,7 +50,7 @@ func (l *DynamicGroupLister) List(ctx context.Context, o interface{}) ([]resourc
 		if dg.LifecycleState == identity.DynamicGroupLifecycleStateDeleted || dg.LifecycleState == identity.DynamicGroupLifecycleStateDeleting {
 			continue
 		}
-		if dg.Name == nil || !strings.HasPrefix(*dg.Name, opts.Prefix+"-") {
+		if !opts.MatchesPrefix(dg.Name, "%s-") {
 			continue
 		}
 		resources = append(resources, &DynamicGroup{client: client, ID: dg.Id, Name: dg.Name})
