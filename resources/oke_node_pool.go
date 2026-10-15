@@ -68,7 +68,11 @@ type OkeNodePool struct {
 // DeleteNodePool only accepts the request. HandleWait keeps the node pool waiting until it is
 // gone, so the subnets that depend on it are not removed while it still holds VNICs in them.
 func (r *OkeNodePool) Remove(ctx context.Context) error {
-	_, err := r.client.DeleteNodePool(ctx, containerengine.DeleteNodePoolRequest{NodePoolId: r.ID})
+	_, err := r.client.DeleteNodePool(ctx, containerengine.DeleteNodePoolRequest{
+		NodePoolId:                                r.ID,
+		OverrideEvictionGraceDuration:             common.String("PT0M"),
+		IsForceDeletionAfterOverrideGraceDuration: common.Bool(true),
+	})
 	return err
 }
 
