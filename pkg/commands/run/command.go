@@ -47,7 +47,7 @@ func execute(ctx context.Context, cmd *cli.Command) error {
 		Includes:           cmd.StringSlice("include"),
 		Excludes:           cmd.StringSlice("exclude"),
 		WaitOnDependencies: true,
-		MaxWaitRetries:     20,
+		MaxWaitRetries:     240,
 	}
 
 	parsedConfig, err := libconfig.New(libconfig.Options{
